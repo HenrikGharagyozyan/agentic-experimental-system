@@ -39,6 +39,16 @@ For every task, however small:
 8. Never install new dependencies, delete files, or change project configuration
    (`pyproject.toml`, `.claude/`, CI) without asking first.
 
+## Git workflow
+
+- Branches: `main` (stable), `develop` (integration), `feature/<short-description>` for
+  every new feature.
+- Flow: `feature/*` → `develop` → `main`. I create branches and do all merges myself.
+- **Before starting any work, check the current branch.** If it is `main` or `develop`,
+  stop and warn me; do not change files there.
+- At the end of each step, suggest a commit message in Conventional Commits format:
+  `feat:`, `fix:`, `chore:`, `test:`, `docs:`, `refactor:`.
+
 If I say "объясни" or "почему", explain in more depth before continuing.
 
 **Current mode: fast MVP.** We are building a minimal end-to-end skeleton tonight.
@@ -66,7 +76,8 @@ Flow: Scientist → Experiment → Runner → Analyst → (route back or finish)
 Non-LLM parts: **Device Registry** (YAML/JSON: devices, parameters, ranges, units),
 **Safety Validator** (rejects any command outside the registry in code), **Scientific
 Core** (all math), **Optimization Engine**, **Execution backends** (Simulation now,
-Hardware via MCP later, one common interface), **Storage**, **LLM provider layer**.
+Hardware via MCP later, one common interface), **Knowledge Base** (scientific retrieval
+for the Scientist), **Storage**, **LLM provider layer**.
 Agents exchange **Pydantic models**, never free text.
 
 ## Hard rules
@@ -86,9 +97,26 @@ Agents exchange **Pydantic models**, never free text.
   commands; the Safety Validator checks every command against the Device Registry
   (allowed operations, ranges, units) before it reaches any backend. Out-of-range = reject
   and report, never clamp silently. Human approval for real hardware comes later.
+- **Defense in depth for hardware.** The orchestrator validates every command before
+  `execute()`, and the hardware backend **always re-validates** every command through the
+  Safety Validator itself before it reaches a device.
 - **Iteration limit.** The orchestrator always has a max-iterations guard.
+- **The LLM provider is never hard-coded.** Agents depend only on our interface
+  "request → Pydantic object" (`LLMClient`). First adapter: OpenRouter (OpenAI-compatible
+  API). The model is configured **per agent** (Scientist, Experiment, Runner, Analyst)
+  with a shared default. A `FakeLLM` exists for tests. Fallback for models without native
+  structured output / tool calling: ask for JSON in text → validate with Pydantic → on
+  failure retry with the validation error text.
+- **Knowledge Base = scientific knowledge for the Scientist only** (papers, formulas,
+  theory; later, results of past experiments). One interface, two implementations:
+  InMemory (tests) and Pinecone (integrated embedding). The Scientist must cite the
+  retrieved fragments it relies on (citations by fragment id).
+- **Device facts come only from the Device Registry.** Device parameters, ranges, units
+  and capabilities are read only from the human-verified registry config, never from
+  RAG and never "from memory" of an LLM.
 - Keep it simple: no extra agents, frameworks or abstractions that the current milestone
-  does not need. No FastAPI / PostgreSQL / vector DB until the roadmap reaches them.
+  does not need. No FastAPI / PostgreSQL until the roadmap reaches them; Pinecone only
+  behind the `KnowledgeBase` interface, once the Knowledge Base step is reached.
 
 ## Known context (unconfirmed — do not hard-code)
 
@@ -97,6 +125,18 @@ macro-pixels) → liquid crystal cell (voltage-tunable scattering medium, i.e. t
 transmission matrix T) → camera. Ising energy ≈ −(intensity at chosen camera points),
 with J_ij = Re Σ_m t_im t*_jm. Treat this as a hypothesis useful for the simulation
 backend later, not as a confirmed requirement.
+
+Known lab equipment (unconfirmed; device facts enter the code only via the Device
+Registry after human verification):
+
+- SLM: Meadowlark, 1920×1152, phase-only (Blink SDK);
+- camera: ALKERIA Celera (`alkusb3`);
+- generator: RIGOL DG812 (model unconfirmed; to be verified on the instrument);
+- laser: 532 nm.
+
+One setup solves different task types (focusing, Ising, reservoir computing); almost all
+of them start with transmission-matrix calibration. The task/experiment type must be
+extensible (data, not a closed hard-coded list).
 
 ## Tooling conventions
 
