@@ -94,6 +94,7 @@ def test_repository_cards_form_a_valid_pack() -> None:
     pack = load_knowledge_pack(CardDirectorySource(CARDS), max_chars=60_000)
     ids = pack.card_ids
     assert {
+        "intensity_only_measurement",
         "ising_energy_from_intensity",
         "coupling_matrix_from_tm",
         "ggs_transmission_matrix",
@@ -102,3 +103,16 @@ def test_repository_cards_form_a_valid_pack() -> None:
     } <= ids
     for card in pack.cards:
         assert any(name in card.source for name in ("Delloye", "Huang", "Zhao")), card.card_id
+    assert "Discrepancy" in pack.text  # deviations from the printed papers are explicit
+    assert len(pack.text) < 60_000
+
+
+def test_review_document_is_up_to_date() -> None:
+    """docs/knowledge_pack_review.md must contain the current pack verbatim."""
+    pack = load_knowledge_pack(CardDirectorySource(CARDS), max_chars=60_000)
+    review = (REPO / "docs" / "knowledge_pack_review.md").read_text(encoding="utf-8")
+    begin = "<!-- BEGIN VERBATIM KNOWLEDGE PACK -->\n"
+    end = "<!-- END VERBATIM KNOWLEDGE PACK -->"
+    verbatim = review.split(begin, 1)[1].split(end, 1)[0]
+    assert verbatim == pack.text, "regenerate docs/knowledge_pack_review.md (expsys knowledge)"
+    assert pack.sha256 in review
