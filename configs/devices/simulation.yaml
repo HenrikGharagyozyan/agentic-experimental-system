@@ -1,0 +1,110 @@
+# Device Registry for the SIMULATION backend.
+#
+# SIMULATION ONLY — NOT REAL HARDWARE VALUES.
+# Every device, range and unit below is fictional and chosen to make the simulated setup
+# behave plausibly. Real devices (Meadowlark SLM, ALKERIA camera, RIGOL generator, 532 nm
+# laser) get their own, human-verified registry file at the hardware milestone.
+
+name: simulation
+simulation_only: true
+notice: "simulation only — not real hardware values"
+
+devices:
+  - device_id: sim_laser
+    kind: laser
+    description: "Simulated CW laser. Output power scales all intensities linearly."
+    operations:
+      - name: set_emission
+        description: "Switch laser emission on or off. With emission off the camera sees only noise."
+        parameters:
+          - {name: enabled, kind: bool}
+      - name: set_power
+        description: "Set the optical output power."
+        parameters:
+          - {name: power, kind: float, unit: mW, minimum: 0.0, maximum: 50.0}
+
+  - device_id: sim_slm
+    kind: slm
+    description: >-
+      Simulated phase-only spatial light modulator, grouped into a square grid of
+      macro-pixels (N = grid_side^2 spins / input modes). Masks are written by procedures,
+      never by commands.
+    operations:
+      - name: configure
+        description: "Set the macro-pixel grid. Changing it invalidates any calibrated transmission matrix."
+        parameters:
+          - {name: grid_side, kind: int, minimum: 2, maximum: 16, description: "N = grid_side^2 (max 256)"}
+
+  - device_id: sim_generator
+    kind: generator
+    description: >-
+      Simulated function generator driving the liquid-crystal scattering cell.
+      SIMULATION HYPOTHESIS: the output amplitude changes the interaction length of the
+      thin scattering medium (larger amplitude -> longer interaction length). It has no
+      effect on the thick (UTC) medium.
+    operations:
+      - name: configure
+        description: "Set the drive signal."
+        parameters:
+          - {name: amplitude, kind: float, unit: V, minimum: 0.0, maximum: 10.0}
+          - {name: frequency, kind: float, unit: Hz, minimum: 100.0, maximum: 10000.0, required: false, default: 1000.0}
+      - name: set_output
+        description: "Switch the generator output on or off (off = medium at its minimum interaction length)."
+        parameters:
+          - {name: enabled, kind: bool}
+
+  - device_id: sim_camera
+    kind: camera
+    description: "Simulated 8-bit (mono8) camera; saturates at 255 counts. Counts scale with exposure."
+    operations:
+      - name: set_exposure
+        description: "Set the exposure time."
+        parameters:
+          - {name: exposure, kind: float, unit: ms, minimum: 0.01, maximum: 100.0}
+      - name: capture
+        description: "Capture one frame with the current SLM mask (random mask if none). Reports mean counts and saturation."
+        parameters: []
+
+  - device_id: procedures
+    kind: procedure
+    description: >-
+      Virtual device: deterministic high-level procedures that run the fast inner loop
+      (thousands of SLM/camera operations) inside the backend. Their parameters are
+      validated like any other device parameter.
+    operations:
+      - name: calibrate_transmission_matrix
+        description: >-
+          Measure L = gamma * N random-phase masks and retrieve the complex transmission
+          matrix from intensities only (Generalized Gerchberg-Saxton). Required before 'focus'.
+        parameters:
+          - {name: algorithm, kind: choice, choices: [ggs_1, ggs_2, ggs_2_1], required: false, default: ggs_2_1}
+          - {name: gamma, kind: float, minimum: 1.0, maximum: 8.0, description: "number of probe masks / N"}
+          - {name: max_iterations, kind: int, minimum: 10, maximum: 2000, required: false, default: 1000, description: "per GGS stage"}
+          - {name: auto_exposure, kind: bool, required: false, default: true, description: "pre-scan to avoid camera saturation"}
+          - {name: seed, kind: int, minimum: 0, maximum: 1000000, required: false, default: 0}
+
+      - name: run_ising_optimization
+        description: >-
+          Optical Ising ground-state search: spins = binary 0/pi phases, energy = minus
+          the intensity at the target camera modes. The optimizer only sees camera counts.
+        parameters:
+          - {name: algorithm, kind: choice, choices: [batch_flip, simulated_annealing]}
+          - {name: n_iterations, kind: int, minimum: 10, maximum: 100000, description: "camera measurements per replica"}
+          - {name: n_targets, kind: int, minimum: 1, maximum: 2, required: false, default: 1}
+          - {name: target_separation, kind: float, unit: px, minimum: 0.0, maximum: 16.0, required: false, default: 0.0, description: "distance between the two target modes, in SLM macro-pixels"}
+          - {name: n_replicas, kind: int, minimum: 1, maximum: 20, required: false, default: 1, description: "independent runs from different random starts"}
+          - {name: bias, kind: choice, choices: [none, calibrated_tm], required: false, default: none, description: "calibrated_tm: add the phase bias -Arg(sum of target rows of the calibrated T) so ground states are magnetized regions (Jacucci et al. 2022 / Delloye et al.); needs a calibration for the current medium setting"}
+          - {name: initial_batch_fraction, kind: float, minimum: 0.0, maximum: 0.5, required: false, default: 0.12, description: "batch_flip: initial fraction of spins flipped together"}
+          - {name: temperature_start, kind: float, minimum: 0.0001, maximum: 10.0, required: false, default: 0.5, description: "simulated_annealing, relative to mean intensity"}
+          - {name: temperature_end, kind: float, minimum: 0.0001, maximum: 10.0, required: false, default: 0.005}
+          - {name: auto_exposure, kind: bool, required: false, default: true, description: "halve exposure when the target saturates"}
+          - {name: seed, kind: int, minimum: 0, maximum: 1000000, required: false, default: 0}
+
+      - name: focus
+        description: "Focus light on the target mode(s) using the calibrated transmission matrix, then measure the enhancement inputs."
+        parameters:
+          - {name: method, kind: choice, choices: [phase_conjugation, gs_tm], required: false, default: phase_conjugation}
+          - {name: n_targets, kind: int, minimum: 1, maximum: 2, required: false, default: 1}
+          - {name: target_separation, kind: float, unit: px, minimum: 0.0, maximum: 16.0, required: false, default: 0.0}
+          - {name: n_reference_masks, kind: int, minimum: 10, maximum: 1000, required: false, default: 200, description: "random masks for the reference speckle intensity"}
+          - {name: seed, kind: int, minimum: 0, maximum: 1000000, required: false, default: 0}

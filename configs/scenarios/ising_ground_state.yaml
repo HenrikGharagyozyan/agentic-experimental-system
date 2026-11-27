@@ -1,0 +1,97 @@
+# Demo 1: optical Ising ground state, N = 16 spins, thick (UTC) medium, one target mode.
+# The first plan is deliberately weak (10 iterations) -> Analyst REPLAN -> the second plan
+# (200 iterations x 4 replicas) reaches the exact ground state.
+name: ising_ground_state
+summary: "N=16 optical Ising ground state; weak first plan -> REPLAN -> success"
+task:
+  description: >-
+    Find the ground state of the optical Ising Hamiltonian H = -I_target for N = 16 spins
+    encoded as binary SLM phases behind a thick scattering medium, using one target camera
+    mode. Success: the energy gap to the exact ground state is at most 1%.
+  task_type_hint: ising_ground_state
+max_iterations: 4
+world: {medium: utc, medium_seed: 3, noise_seed: 1, initial_slm_grid_side: 4}
+
+llm:
+  scientist:
+    - objective: >-
+        Minimise the optical Ising energy H(sigma) = -I_m of one target camera mode for
+        N = 16 binary spins and verify optimality against the exact (brute-force) ground state.
+      task_type: ising_ground_state
+      math_model:
+        description: "Spatial photonic Ising machine with spins as 0/pi phases (Delloye et al.)."
+        equations:
+          - "H(sigma) = - sum_{m in S} I_m = - sum_{ij} J_ij sigma_i sigma_j"
+          - "J_ij = Re sum_{m in S} t_mi conj(t_mj)"
+        variables:
+          sigma_i: "spin of SLM macro-pixel i, +1 -> phase 0, -1 -> phase pi"
+          t_mi: "transmission matrix element from pixel i to camera mode m"
+          S: "set of target camera modes (here one mode)"
+      parameters: {n_spins: 16, n_targets: 1}
+      success_criteria:
+        - {metric: energy_gap, op: "<=", target: 0.01, description: "within 1% of the exact minimum"}
+      assumptions:
+        - "The camera intensity at the target mode is a faithful (noisy) measure of -H."
+        - "N = 16 is small enough for exact enumeration of the ground state."
+      open_questions:
+        - "On hardware, how stable is the medium over the optimisation time?"
+      citations:
+        - {fragment_id: "card:ising_energy_from_intensity", note: "H = -I and spin encoding"}
+        - {fragment_id: "card:ground_state_search", note: "feedback optimisation, ~10N iterations"}
+
+  experiment:
+    - rationale: "Quick first attempt: switch on the light and run a short batch-flip optimisation."
+      steps:
+        - {step_id: s1, action: prepare_light, description: "Set laser power and switch emission on", devices: [sim_laser]}
+        - {step_id: s2, action: configure_slm, description: "Use a 4x4 macro-pixel grid (N = 16)", devices: [sim_slm], parameters: {grid_side: 4}}
+        - step_id: s3
+          action: optimize
+          description: "Batch-flip ground-state search on one target mode"
+          devices: [procedures, sim_camera]
+          parameters: {algorithm: batch_flip, n_iterations: 10, n_replicas: 1}
+          depends_on: [s1, s2]
+    - rationale: >-
+        The analyst reports a large energy gap and no plateau after 10 iterations. Following
+        Delloye et al. (~10N iterations to a plateau) use 200 iterations (> 10N) and 4 replicas
+        from different random starts.
+      steps:
+        - {step_id: s1, action: prepare_light, description: "Keep the light on", devices: [sim_laser]}
+        - {step_id: s2, action: configure_slm, description: "4x4 macro-pixel grid", devices: [sim_slm], parameters: {grid_side: 4}}
+        - step_id: s3
+          action: optimize
+          description: "Longer batch-flip search with replicas"
+          devices: [procedures, sim_camera]
+          parameters: {algorithm: batch_flip, n_iterations: 200, n_replicas: 4}
+          depends_on: [s1, s2]
+
+  runner:
+    - commands:
+        - {step_id: s1, device_id: sim_laser, operation: set_power, parameters: {power: {value: 10.0, unit: mW}}}
+        - {step_id: s1, device_id: sim_laser, operation: set_emission, parameters: {enabled: {value: true}}}
+        - {step_id: s2, device_id: sim_slm, operation: configure, parameters: {grid_side: {value: 4}}}
+        - {step_id: s3, device_id: sim_camera, operation: set_exposure, parameters: {exposure: {value: 1.0, unit: ms}}}
+        - step_id: s3
+          device_id: procedures
+          operation: run_ising_optimization
+          parameters: {algorithm: {value: batch_flip}, n_iterations: {value: 10}, n_replicas: {value: 1}}
+    - commands:
+        - {step_id: s1, device_id: sim_laser, operation: set_emission, parameters: {enabled: {value: true}}}
+        - {step_id: s2, device_id: sim_slm, operation: configure, parameters: {grid_side: {value: 4}}}
+        - step_id: s3
+          device_id: procedures
+          operation: run_ising_optimization
+          parameters: {algorithm: {value: batch_flip}, n_iterations: {value: 200}, n_replicas: {value: 4}}
+
+  analyst:
+    - decision: REPLAN
+      rationale: >-
+        The energy gap criterion is not met and the energy trajectory has not reached a
+        plateau: the 10-iteration budget is far below the ~10N iterations needed.
+      anomalies: ["optimisation stopped before convergence"]
+      recommendations:
+        - "Increase n_iterations to at least 10N (e.g. 200 for N = 16)."
+        - "Run several replicas (e.g. 4) to avoid a single unlucky start."
+      referenced_metrics: [energy_gap, plateau_fraction]
+    - decision: DONE
+      rationale: "The energy gap is within the target and the best replica matches the exact ground state."
+      referenced_metrics: [energy_gap, ground_state_overlap]

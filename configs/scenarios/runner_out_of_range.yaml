@@ -1,0 +1,46 @@
+# Safety demo: the Runner first proposes a laser power outside the registry range
+# (500 mW > 50 mW). The Safety Validator rejects it in code (no clamping), the Runner gets
+# the violation and fixes the command, then the experiment runs normally.
+name: runner_out_of_range
+summary: "Runner proposes 500 mW -> validator rejects -> Runner corrects -> success"
+task:
+  description: >-
+    Find the optical Ising ground state for N = 16 spins with one target mode (energy gap to
+    the exact minimum at most 5%).
+  task_type_hint: ising_ground_state
+max_iterations: 2
+world: {medium: utc, medium_seed: 3, noise_seed: 1, initial_slm_grid_side: 4}
+
+llm:
+  scientist:
+    - objective: "Minimise H = -I_target for N = 16 spins and compare with the exact ground state."
+      task_type: ising_ground_state
+      math_model:
+        description: "Optical Ising model with binary phase spins."
+        equations: ["H(sigma) = - sum_{m in S} I_m"]
+      parameters: {n_spins: 16}
+      success_criteria:
+        - {metric: energy_gap, op: "<=", target: 0.05}
+      citations:
+        - {fragment_id: "card:ising_energy_from_intensity"}
+
+  experiment:
+    - rationale: "Bright illumination and a 200-iteration batch-flip search (> 10N)."
+      steps:
+        - {step_id: s1, action: prepare_light, description: "Laser on at high power", devices: [sim_laser], parameters: {power_hint: "as bright as possible"}}
+        - {step_id: s2, action: optimize, description: "Batch-flip search", devices: [procedures], parameters: {n_iterations: 200, n_replicas: 2}, depends_on: [s1]}
+
+  runner:
+    - commands:
+        - {step_id: s1, device_id: sim_laser, operation: set_power, parameters: {power: {value: 500.0, unit: mW}}}
+        - {step_id: s1, device_id: sim_laser, operation: set_emission, parameters: {enabled: {value: true}}}
+        - {step_id: s2, device_id: procedures, operation: run_ising_optimization, parameters: {algorithm: {value: batch_flip}, n_iterations: {value: 200}, n_replicas: {value: 2}}}
+    - commands:
+        - {step_id: s1, device_id: sim_laser, operation: set_power, parameters: {power: {value: 50.0, unit: mW}}}
+        - {step_id: s1, device_id: sim_laser, operation: set_emission, parameters: {enabled: {value: true}}}
+        - {step_id: s2, device_id: procedures, operation: run_ising_optimization, parameters: {algorithm: {value: batch_flip}, n_iterations: {value: 200}, n_replicas: {value: 2}}}
+
+  analyst:
+    - decision: DONE
+      rationale: "The energy gap is below 5%; the corrected laser power was accepted by the validator."
+      referenced_metrics: [energy_gap]

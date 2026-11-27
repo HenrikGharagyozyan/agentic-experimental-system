@@ -21,6 +21,7 @@ from experimental_system.schemas.devices import (
     DeviceSpec,
     OperationSpec,
     ParameterSpec,
+    RegistryDocument,
     ValidationResult,
     Violation,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "OperationSpec",
     "ParameterSpec",
     "PlanStep",
+    "RegistryDocument",
     "ScalarValue",
     "ScientificSpecification",
     "SuccessCriterion",
