@@ -1,0 +1,63 @@
+# Demo 2: transmission-matrix calibration by GGS 2-1 (gamma = 4) from intensities only,
+# then focusing by phase conjugation; success = enhancement >= 60% of the theoretical
+# continuous phase-only value pi/4 (N-1) + 1. N = 64, thick (UTC) medium.
+name: tm_calibration_focusing
+summary: "N=64 GGS 2-1 calibration (gamma=4) + focusing; criterion on eta / eta_theory"
+task:
+  description: >-
+    Calibrate the complex transmission matrix of the scattering medium from camera
+    intensities only (no reference beam) for N = 64 SLM macro-pixels, then focus light on
+    one camera mode. Success: the focusing enhancement reaches at least 60% of the
+    theoretical value for continuous phase-only modulation.
+  task_type_hint: tm_calibration_focusing
+max_iterations: 3
+world: {medium: utc, medium_seed: 5, noise_seed: 2, initial_slm_grid_side: 4}
+
+llm:
+  scientist:
+    - objective: >-
+        Retrieve T (M x N, N = 64) from intensity-only measurements with the generalized
+        Gerchberg-Saxton algorithm and validate it by focusing (eta / eta_theory).
+      task_type: tm_calibration_focusing
+      math_model:
+        description: "Linear medium E_out = T E_in; phase retrieval by GGS 2-1 (Huang et al. 2021)."
+        equations:
+          - "E_f = |E|^n * exp(i Arg(P X_{f-1}^T)), X_f = (P^+ E_f)^T, n = 2 then 1"
+          - "eta = I_focus / <I>_random, eta_theory = pi/4 (N - 1) + 1"
+        variables:
+          P: "L x N matrix of random phase-only probe masks, L = gamma N"
+          X: "estimate of the transmission matrix"
+      parameters: {n_pixels: 64, gamma: 4}
+      success_criteria:
+        - {metric: enhancement_ratio, op: ">=", target: 0.6, description: "at least 60% of the theory"}
+      assumptions: ["The medium is stable during calibration and focusing."]
+      open_questions: ["Real SLM phase response (calibration LUT) is not modelled."]
+      citations:
+        - {fragment_id: "card:ggs_transmission_matrix", note: "GGS 2-1 at gamma = 4"}
+        - {fragment_id: "card:focusing_enhancement", note: "eta and its theoretical value"}
+
+  experiment:
+    - rationale: "GGS 2-1 needs gamma >= 4 (Huang et al.); then focus on the central mode and compare with theory."
+      steps:
+        - {step_id: s1, action: prepare_light, description: "Laser on", devices: [sim_laser]}
+        - {step_id: s2, action: configure_slm, description: "8x8 macro-pixels (N = 64)", devices: [sim_slm], parameters: {grid_side: 8}}
+        - {step_id: s3, action: calibrate, description: "GGS 2-1 calibration with gamma = 4", devices: [procedures, sim_slm, sim_camera], parameters: {algorithm: ggs_2_1, gamma: 4}, depends_on: [s1, s2]}
+        - {step_id: s4, action: focus, description: "Phase-conjugation focus on one mode", devices: [procedures, sim_slm, sim_camera], depends_on: [s3]}
+
+  runner:
+    - commands:
+        - {step_id: s1, device_id: sim_laser, operation: set_power, parameters: {power: {value: 10.0, unit: mW}}}
+        - {step_id: s1, device_id: sim_laser, operation: set_emission, parameters: {enabled: {value: true}}}
+        - {step_id: s2, device_id: sim_slm, operation: configure, parameters: {grid_side: {value: 8}}}
+        - step_id: s3
+          device_id: procedures
+          operation: calibrate_transmission_matrix
+          parameters: {algorithm: {value: ggs_2_1}, gamma: {value: 4.0}, max_iterations: {value: 1000}}
+        - {step_id: s4, device_id: procedures, operation: focus, parameters: {method: {value: phase_conjugation}, n_reference_masks: {value: 200}}}
+
+  analyst:
+    - decision: DONE
+      rationale: >-
+        The enhancement ratio exceeds the 60% target and the calibration converged; the
+        retrieved transmission matrix is accurate enough for focusing.
+      referenced_metrics: [enhancement_ratio, calibration_converged_fraction, tm_correlation]

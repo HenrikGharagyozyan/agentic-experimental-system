@@ -186,4 +186,25 @@ data/knowledge/cards/*.md ───────────────► по 
 устройства, Experiment не тратит внимание на диапазоны, а единственный, кто видит
 диапазоны, — Runner, и его всё равно проверяет код.
 
+### 4.12 Оркестратор (`orchestrator/`)
+```
+START → scientist → experiment → runner → validate ─┬─(отклонено, ≤2)→ runner
+                                                    └─(принято)→ execute → metrics → analyst → route
+route: DONE → finalize        REPLAN  → experiment (iteration+1)
+       ABORT → finalize       REMODEL → scientist  (iteration+1)
+       лимит итераций → ITERATION_LIMIT → finalize
+любая ошибка узла (LLM, агент, backend, бюджет) → FAILED → finalize → END
+```
+- Состояние — один неизменяемый `ExperimentState` в канале LangGraph; узлы — чистые
+  функции; после каждого узла `state.json` сохраняется на диск.
+- На каждом круге в `history` добавляется `IterationRecord` (спецификация, план,
+  валидации, число исправлений Runner'а, исполнение, метрики, анализ).
+- `require_approval` — пауза перед `execute()` с подтверждением в CLI.
+- `finalize` пишет `final_report.md` (на русском) детерминированно из состояния.
+
+### 4.13 Сценарии и сборка (`scenarios.py`, `app.py`, `configs/scenarios/`)
+Сценарий = задача + `SimulationWorld` + (для FakeLLM) ответы агентов. `app.run_task`
+собирает registry → backend → KB → LLM-клиенты (с логированием и бюджетом) → оркестратор;
+CLI и e2e-тесты используют одну и ту же сборку.
+
 <!-- Следующие разделы добавляются по мере реализации этапов. -->

@@ -38,10 +38,20 @@ def search_query(inp: ScientistInput) -> str:
     return " ".join(parts)
 
 
+def retrieve(
+    kb: KnowledgeBase, query: str, *, top_k: int = 6, cards_k: int = 4
+) -> list[KnowledgeFragment]:
+    """Curated knowledge cards first (key formulas), then the best matches overall."""
+    cards = kb.search(query, top_k=cards_k, filters={"kind": "card"})
+    rest = kb.search(query, top_k=top_k)
+    seen = {f.fragment_id for f in cards}
+    return cards + [f for f in rest if f.fragment_id not in seen]
+
+
 def run_scientist(
     llm: LLMClient, kb: KnowledgeBase, inp: ScientistInput, *, top_k: int = 6
 ) -> ScientistOutput:
-    fragments = kb.search(search_query(inp), top_k=top_k)
+    fragments = retrieve(kb, search_query(inp), top_k=top_k)
     retrieved = {f.fragment_id for f in fragments}
     payload: dict[str, Any] = {
         "task": inp.task,

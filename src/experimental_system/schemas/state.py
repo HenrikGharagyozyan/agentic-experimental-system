@@ -9,6 +9,7 @@ from experimental_system.schemas.analysis import AnalysisReport, Metrics
 from experimental_system.schemas.common import Contract, new_id
 from experimental_system.schemas.devices import DeviceCommand, ValidationResult
 from experimental_system.schemas.execution import ExecutionResult
+from experimental_system.schemas.knowledge import KnowledgeFragment
 from experimental_system.schemas.plan import ExperimentPlan
 from experimental_system.schemas.task import ScientificSpecification, TaskRequest
 
@@ -28,6 +29,7 @@ class IterationRecord(Contract):
     specification: ScientificSpecification
     plan: ExperimentPlan | None = None
     validations: list[ValidationResult] = Field(default_factory=list)
+    runner_corrections: int = Field(default=0, ge=0)  # re-proposals after validator rejects
     execution: ExecutionResult | None = None
     metrics: Metrics | None = None
     analysis: AnalysisReport | None = None
@@ -51,8 +53,15 @@ class ExperimentState(Contract):
     metrics: Metrics | None = None
     analysis: AnalysisReport | None = None
 
+    runner_corrections: int = Field(default=0, ge=0)
+
     history: list[IterationRecord] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    # Knowledge fragments retrieved by the Scientist during the run (for citations/report).
+    fragments: list[KnowledgeFragment] = Field(default_factory=list)
+    # Human-readable events decided by code (e.g. "DONE overridden to REPLAN").
+    notes: list[str] = Field(default_factory=list)
+    llm_calls: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def _check_iteration_limit(self) -> Self:

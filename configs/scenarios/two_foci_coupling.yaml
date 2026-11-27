@@ -1,0 +1,92 @@
+# Demo 3: thin scatterer, two target modes. Compare the replica overlap at a weak and a
+# strong medium setting (generator amplitude -> interaction length; SIMULATION HYPOTHESIS).
+# With the TM phase bias the ground states are magnetized regions; coupling the regions
+# correlates them across replicas (Delloye et al. 2023, Fig. 3-4). N = 36.
+name: two_foci_coupling
+summary: "thin medium, two foci: replica overlap grows from weak to strong coupling"
+task:
+  description: >-
+    With a thin scattering medium and two target camera modes, compare how strongly the two
+    spin clusters are correlated across independent replicas at two settings of the medium
+    interaction length (weak and strong coupling). Success: the mean replica overlap |q|
+    increases by at least 0.2 from the weak to the strong setting.
+  task_type_hint: cluster_coupling
+max_iterations: 3
+world: {medium: thin, medium_seed: 3, noise_seed: 4, initial_slm_grid_side: 6, camera_grid_side: 8}
+
+llm:
+  scientist:
+    - objective: >-
+        Measure the replica overlap of two-focus Ising ground states at weak and strong
+        cluster coupling and show that stronger coupling correlates the two clusters.
+      task_type: cluster_coupling
+      math_model:
+        description: "Two target modes define two spin regions; their overlap couples the clusters (Delloye et al.)."
+        equations:
+          - "H = -(I_a + I_b)"
+          - "q = (1/N) sum_i sigma_i^alpha sigma_i^beta, compared as |q|"
+        variables:
+          q: "overlap of replicas alpha and beta in the zone of interest"
+      parameters: {n_spins: 36, n_targets: 2, n_replicas: 10}
+      success_criteria:
+        - {metric: replica_overlap_change, op: ">=", target: 0.2, description: "strong minus weak coupling"}
+      assumptions:
+        - "A larger medium interaction length increases the overlap of the two regions."
+        - "The phase bias from the calibrated TM makes the ground states magnetized regions."
+      open_questions:
+        - "On hardware: which drive voltage of the liquid-crystal cell gives which interaction length?"
+      citations:
+        - {fragment_id: "card:replica_overlap", note: "two foci, cluster coupling, |q|"}
+        - {fragment_id: "card:coupling_matrix_from_tm", note: "thin diffuser and interaction length; phase bias"}
+
+  experiment:
+    - rationale: >-
+        Same optimisation at two medium settings; recalibrate T after each change because the
+        phase bias needs the current transmission matrix.
+      steps:
+        - {step_id: s1, action: prepare_light, description: "Laser on", devices: [sim_laser]}
+        - {step_id: s2, action: configure_slm, description: "6x6 macro-pixels (N = 36)", devices: [sim_slm], parameters: {grid_side: 6}}
+        - {step_id: s3, action: set_medium_weak, description: "Low drive amplitude (short interaction length)", devices: [sim_generator], parameters: {amplitude: 1.7}}
+        - {step_id: s4, action: calibrate, description: "Calibrate T at the weak setting", devices: [procedures], parameters: {gamma: 4}, depends_on: [s1, s2, s3]}
+        - {step_id: s5, action: optimize, description: "10 replicas, two foci, phase bias", devices: [procedures], parameters: {n_replicas: 10, n_iterations: 360, n_targets: 2, target_separation: 3}, depends_on: [s4]}
+        - {step_id: s6, action: set_medium_strong, description: "High drive amplitude (long interaction length)", devices: [sim_generator], parameters: {amplitude: 10}, depends_on: [s5]}
+        - {step_id: s7, action: calibrate, description: "Recalibrate T at the strong setting", devices: [procedures], parameters: {gamma: 4}, depends_on: [s6]}
+        - {step_id: s8, action: optimize, description: "Same optimisation at strong coupling", devices: [procedures], parameters: {n_replicas: 10, n_iterations: 360, n_targets: 2, target_separation: 3}, depends_on: [s7]}
+
+  runner:
+    - commands:
+        - {step_id: s1, device_id: sim_laser, operation: set_power, parameters: {power: {value: 10.0, unit: mW}}}
+        - {step_id: s1, device_id: sim_laser, operation: set_emission, parameters: {enabled: {value: true}}}
+        - {step_id: s2, device_id: sim_slm, operation: configure, parameters: {grid_side: {value: 6}}}
+        - {step_id: s3, device_id: sim_generator, operation: configure, parameters: {amplitude: {value: 1.7, unit: V}}}
+        - {step_id: s3, device_id: sim_generator, operation: set_output, parameters: {enabled: {value: true}}}
+        - {step_id: s4, device_id: procedures, operation: calibrate_transmission_matrix, parameters: {gamma: {value: 4.0}}}
+        - step_id: s5
+          device_id: procedures
+          operation: run_ising_optimization
+          parameters:
+            algorithm: {value: batch_flip}
+            n_iterations: {value: 360}
+            n_targets: {value: 2}
+            target_separation: {value: 3.0, unit: px}
+            n_replicas: {value: 10}
+            bias: {value: calibrated_tm}
+        - {step_id: s6, device_id: sim_generator, operation: configure, parameters: {amplitude: {value: 10.0, unit: V}}}
+        - {step_id: s7, device_id: procedures, operation: calibrate_transmission_matrix, parameters: {gamma: {value: 4.0}}}
+        - step_id: s8
+          device_id: procedures
+          operation: run_ising_optimization
+          parameters:
+            algorithm: {value: batch_flip}
+            n_iterations: {value: 360}
+            n_targets: {value: 2}
+            target_separation: {value: 3.0, unit: px}
+            n_replicas: {value: 10}
+            bias: {value: calibrated_tm}
+
+  analyst:
+    - decision: DONE
+      rationale: >-
+        The replica overlap increases from the weak to the strong coupling setting by more
+        than the required 0.2: the clusters become correlated, as expected from Delloye et al.
+      referenced_metrics: [replica_overlap_change, replica_overlap]
