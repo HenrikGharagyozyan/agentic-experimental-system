@@ -21,10 +21,15 @@ class ParameterSpec(Contract):
     maximum: float | None = None
     choices: list[str] | None = None
     required: bool = True
+    # Value the backend uses when an optional parameter is omitted. Checked against this
+    # spec when the registry is loaded (devices.yaml_registry).
+    default: ScalarValue | None = None
     description: str = ""
 
     @model_validator(mode="after")
     def _check_consistency(self) -> Self:
+        if self.required and self.default is not None:
+            raise ValueError(f"parameter {self.name!r}: a required parameter has no default")
         numeric = self.kind in ("float", "int")
         has_range = self.minimum is not None or self.maximum is not None
         if has_range and not numeric:
@@ -45,6 +50,15 @@ class OperationSpec(Contract):
     description: str = ""
     parameters: list[ParameterSpec] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def _check_unique_parameters(self) -> Self:
+        _require_unique([p.name for p in self.parameters], f"operation {self.name!r} parameter")
+        return self
+
+    def parameter(self, name: str) -> ParameterSpec | None:
+        """The parameter with this name, or None."""
+        return next((p for p in self.parameters if p.name == name), None)
+
 
 class DeviceSpec(Contract):
     """A device as described in the Device Registry."""
@@ -54,6 +68,37 @@ class DeviceSpec(Contract):
     description: str = ""
     operations: list[OperationSpec] = Field(min_length=1)
     # TODO(later): settle_time, dependencies between devices.
+
+    @model_validator(mode="after")
+    def _check_unique_operations(self) -> Self:
+        _require_unique([o.name for o in self.operations], f"device {self.device_id!r} operation")
+        return self
+
+    def operation(self, name: str) -> OperationSpec | None:
+        """The operation with this name, or None."""
+        return next((o for o in self.operations if o.name == name), None)
+
+
+class RegistryDocument(Contract):
+    """Top-level content of a registry config file (e.g. configs/devices/simulation.yaml)."""
+
+    name: Identifier
+    simulation_only: bool  # True: fictional values, never valid for real hardware
+    notice: str = ""
+    devices: list[DeviceSpec] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check_unique_devices(self) -> Self:
+        _require_unique([d.device_id for d in self.devices], "device_id")
+        return self
+
+
+def _require_unique(names: list[str], what: str) -> None:
+    seen: set[str] = set()
+    for name in names:
+        if name in seen:
+            raise ValueError(f"duplicate {what}: {name!r}")
+        seen.add(name)
 
 
 # --- Commands (proposed by the Runner LLM) -------------------------------------------------
