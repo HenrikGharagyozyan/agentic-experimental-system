@@ -2,7 +2,7 @@
 
 from typing import Literal, Self
 
-from pydantic import Field, computed_field, model_validator
+from pydantic import Field, computed_field, field_validator, model_validator
 
 from experimental_system.schemas.common import Contract, Identifier, NonEmptyStr, ScalarValue
 
@@ -112,6 +112,12 @@ class CommandParam(Contract):
 
     value: ScalarValue
     unit: str | None = None
+
+    @field_validator("unit", mode="before")
+    @classmethod
+    def _blank_unit_is_none(cls, unit: object) -> object:
+        """LLMs often write "" for "no unit"; that means None (the value is untouched)."""
+        return None if isinstance(unit, str) and not unit.strip() else unit
 
 
 class DeviceCommand(Contract):

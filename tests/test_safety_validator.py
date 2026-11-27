@@ -144,3 +144,9 @@ def test_batch_reports_each_command(validator: SafetyValidator) -> None:
     assert not all_accepted(results)
     assert all_accepted(results[:1])
     assert not all_accepted([])
+
+
+def test_blank_unit_means_no_unit(validator: SafetyValidator) -> None:
+    command = _cmd("sim_slm", "configure", grid_side=(4, ""))
+    assert command.parameters["grid_side"].unit is None
+    assert validator.validate(command).accepted
