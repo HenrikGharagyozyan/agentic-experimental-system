@@ -41,7 +41,15 @@ uv run expsys show <experiment_id>                    # сводка прого�
 ### Научные знания (knowledge pack)
 
 Scientist получает все карточки `data/knowledge/cards/*.md` целиком в системном промпте
-(поиска нет). Точный текст пакета каждого прогона сохраняется в
+(поиска нет). Посмотреть пакет ровно в том виде, в каком его видит Scientist:
+
+```bash
+uv run expsys knowledge          # только knowledge pack
+uv run expsys knowledge --full   # весь системный промпт Scientist (роль + пакет)
+```
+
+Версия для проверки физиком — [docs/knowledge_pack_review.md](docs/knowledge_pack_review.md).
+Точный текст пакета каждого прогона сохраняется в
 `runs/<id>/knowledge_pack.md`. PDF статей лежат только локально (`data/papers/*.pdf` в
 `.gitignore`) — это первоисточники для людей, система их не читает.
 

@@ -225,6 +225,8 @@ CLI и e2e-тесты используют одну и ту же сборку.
 ### 4.14 CLI (`cli.py`)
 - `expsys run "<задача>" --llm fake|openrouter [--max-iterations N] [--scenario <name>]
   [--approve]`;
+- `expsys knowledge [--full]` — печатает knowledge pack (или весь системный промпт
+  Scientist) теми же функциями, что строят промпт, т.е. байт в байт;
 - `expsys show <experiment_id>`, `expsys scenarios`.
 Ошибки конфигурации (нет ключа, нет модели, неизвестный сценарий) выдаются одной
 строкой и проверяются **до** создания каталога прогона.

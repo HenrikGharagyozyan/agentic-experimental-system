@@ -2,7 +2,7 @@
 
 Application variables use the ``EXPSYS_`` prefix, e.g. ``EXPSYS_LOG_LEVEL=DEBUG``.
 Provider variables keep their conventional names (``OPENROUTER_API_KEY``,
-``DEFAULT_MODEL``, ``SCIENTIST_MODEL``, ``PINECONE_API_KEY``, ...).
+``DEFAULT_MODEL``, ``SCIENTIST_MODEL``, ...).
 Real environment variables take precedence over values in `.env`.
 
 Model names are never hard-coded: they come only from these settings / `.env`.

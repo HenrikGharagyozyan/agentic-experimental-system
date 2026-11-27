@@ -8,7 +8,8 @@ from typing import Annotated
 
 import typer
 
-from experimental_system.app import run_task, scenario_task
+from experimental_system.agents.scientist import scientist_system_prompt
+from experimental_system.app import knowledge_pack, run_task, scenario_task
 from experimental_system.config import ConfigError, Settings
 from experimental_system.knowledge.cards import KnowledgePackError
 from experimental_system.scenarios import ScenarioError, list_scenarios, load_scenario
@@ -38,6 +39,22 @@ def _settings() -> Settings:
 def _fail(message: str) -> typer.Exit:
     typer.secho(f"Ошибка: {message}", fg=typer.colors.RED, err=True)
     return typer.Exit(code=1)
+
+
+@app.command()
+def knowledge(
+    full: Annotated[
+        bool, typer.Option("--full", help="Print the Scientist's whole system prompt")
+    ] = False,
+) -> None:
+    """Print the knowledge pack exactly as the Scientist sees it (for human review)."""
+    settings = _settings()
+    try:
+        pack = knowledge_pack(settings)
+    except KnowledgePackError as exc:
+        raise _fail(str(exc)) from exc
+    # Same functions as the Scientist uses: byte-for-byte the text in its system prompt.
+    typer.echo(scientist_system_prompt(pack) if full else pack.text, nl=False)
 
 
 @app.command()
