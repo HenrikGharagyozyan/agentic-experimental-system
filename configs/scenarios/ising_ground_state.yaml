@@ -36,8 +36,8 @@ llm:
       open_questions:
         - "On hardware, how stable is the medium over the optimisation time?"
       citations:
-        - {fragment_id: "card:ising_energy_from_intensity", note: "H = -I and spin encoding"}
-        - {fragment_id: "card:ground_state_search", note: "feedback optimisation, ~10N iterations"}
+        - {card_id: ising_energy_from_intensity, note: "H = -I and spin encoding"}
+        - {card_id: ground_state_search, note: "feedback optimisation, ~10N iterations"}
 
   experiment:
     - rationale: "Quick first attempt: switch on the light and run a short batch-flip optimisation."

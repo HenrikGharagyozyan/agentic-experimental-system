@@ -453,3 +453,54 @@
 - `CommandParam.unit`: пустая строка `""` нормализуется в `None` («нет единицы»). Реальные
   LLM часто так пишут для безразмерных параметров; значение команды не меняется, а
   непустая неверная единица по-прежнему отклоняется валидатором.
+
+---
+
+# Ветка `feature/static-knowledge`
+
+## Шаг 1. RAG заменён статическим knowledge pack
+
+**Решение (твоё):** Knowledge Base с поиском убрана. Статей три, карточек меньше десяти —
+весь объём помещается в системный промпт Scientist; поиск только добавлял риск потерять
+нужную формулу (и делал поведение зависимым от локального индекса).
+
+**Что сделано**
+- `knowledge/cards.py`: `KnowledgeSource` (протокол «источник карточек»: `cards()`),
+  `CardDirectorySource` (каталог `*.md`), `parse_card` (строгая проверка front matter:
+  обязательные `id`/`title`/`source`, без лишних ключей, `id` в snake_case, непустое
+  тело), `build_knowledge_pack` (уникальность id, сортировка по id, лимит
+  `EXPSYS_KNOWLEDGE_PACK_MAX_CHARS`, по умолчанию 60 000 символов) → `KnowledgePack(text,
+  cards, sha256)`. Все ошибки — `KnowledgePackError` с именем файла.
+- Scientist: системный промпт = `prompts/scientist.md` + текст пакета
+  (`scientist_system_prompt`); из контекста убраны `knowledge_fragments`. Проверка в
+  коде: каждая цитата — `card_id` существующей карточки, хотя бы одна цитата.
+- Контракты: `KnowledgeFragment` → `KnowledgeCard`; **`Citation.fragment_id` →
+  `Citation.card_id`** (тип `Identifier`); в `ExperimentState` вместо `fragments` —
+  `knowledge_cards` и `knowledge_pack_sha256`.
+- Воспроизводимость: точный текст пакета сохраняется в `runs/<id>/knowledge_pack.md`,
+  хэш — в `state.json`; отчёт берёт заголовки и источники из карточек.
+- Пакет загружается и проверяется **до** создания каталога прогона (как preflight LLM).
+- Сценарии FakeLLM: цитаты `card:<id>` → `card_id: <id>`.
+
+**Удалено:** `knowledge/ingest.py` (PDF → чанки), `knowledge/memory.py` (BM25),
+`knowledge/pinecone_kb.py`, `knowledge/base.py` (`KnowledgeBase.search`), команда
+`expsys ingest`, опция `--kb`, зависимости `pinecone` и `pymupdf`, настройки `PINECONE_*`
+и `kb_index_path`, строка `data/knowledge/index/` в `.gitignore`, тесты RAG.
+
+**Как вернуть RAG, если база знаний вырастет.** Полная реализация — в коммите
+`6b42b72` («feat: add knowledge base with PDF ingestion, BM25 and Pinecone backends»):
+```bash
+git show 6b42b72 --stat
+git checkout 6b42b72 -- src/experimental_system/knowledge/ingest.py \
+    src/experimental_system/knowledge/memory.py src/experimental_system/knowledge/pinecone_kb.py \
+    src/experimental_system/knowledge/base.py tests/test_knowledge.py
+uv add pymupdf pinecone
+```
+Затем: вернуть `KnowledgeBase.search` в Scientist (в коммите `f565769` есть вариант
+«сначала карточки, потом вся база») и цитаты по `fragment_id` либо сделать гибрид:
+knowledge pack в промпте + поиск по статьям как дополнительный инструмент.
+
+**Новые понятия**
+- *Static context vs RAG*: если знаний мало, надёжнее отдать их модели целиком
+  (детерминированно, проверяемо человеком), чем доверять ранжированию поиска. RAG нужен,
+  когда корпус не помещается в контекст.

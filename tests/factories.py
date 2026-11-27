@@ -53,7 +53,7 @@ def make_spec() -> ScientificSpecification:
         success_criteria=[make_criterion()],
         assumptions=["Noise is negligible"],
         open_questions=["Is the objective convex?"],
-        citations=[Citation(fragment_id="frag_1", note="Definition of f")],
+        citations=[Citation(card_id="toy_card", note="Definition of f")],
     )
 
 

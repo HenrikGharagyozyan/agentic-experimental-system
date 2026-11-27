@@ -7,10 +7,8 @@ dependencies = [
     "langgraph>=1.2.24",
     "numpy>=2.5.5",
     "openai>=3.60.0",
-    "pinecone>=10.3.0",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
-    "pymupdf>=2.2",
     "pyyaml>=6.0.4",
     "typer>=0.29.3",
 ]
@@ -55,5 +53,5 @@ warn_required_dynamic_aliases = true
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers"]
 markers = [
-    "live: calls real external services (OpenRouter, Pinecone); needs keys and EXPSYS_RUN_LIVE=1",
+    "live: calls real external services (OpenRouter); needs keys and EXPSYS_RUN_LIVE=1",
 ]

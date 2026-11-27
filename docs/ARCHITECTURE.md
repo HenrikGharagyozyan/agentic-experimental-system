@@ -17,9 +17,9 @@
 TaskRequest
    │
    ▼
-┌───────────┐  поиск   ┌────────────────┐
-│ Scientist │◄────────►│ Knowledge Base │   (только научные знания)
-└─────┬─────┘          └────────────────┘
+┌───────────┐ системный промпт ┌────────────────┐
+│ Scientist │◄─────────────────│ Knowledge pack │   (все карточки целиком, без поиска)
+└─────┬─────┘                  └────────────────┘
       │ ScientificSpecification (критерии успеха = метрики scientific_core)
       ▼
 ┌────────────┐   список устройств/процедур (без диапазонов)
@@ -140,6 +140,7 @@ runs/<experiment_id>/
   iterations/iter_XX.json
   arrays/*.npy          # маски, кадры, T — только по data_ref
   llm_calls.jsonl       # каждый вызов LLM: агент, модель, время, токены
+  knowledge_pack.md     # точный текст knowledge pack, который видел Scientist
   final_report.md       # отчёт на русском
 ```
 
@@ -157,19 +158,33 @@ Agent ──► LoggedLLM (бюджет вызовов + llm_calls.jsonl)
 `DEFAULT_MODEL`; имён моделей в коде нет. `FakeLLM` проигрывает ответы из сценария и
 валидирует их так же строго, поэтому весь цикл работает офлайн и детерминированно.
 
-### 4.10 Knowledge Base (`knowledge/`)
+### 4.10 Научные знания: knowledge pack (`knowledge/cards.py`, `data/knowledge/cards/`)
 Только научные знания и только для Scientist (никогда не источник фактов об устройствах).
+**Поиска нет**: все карточки целиком входят в системный промпт Scientist.
 ```
-data/papers/*.pdf ──pymupdf──► разделы ──► чанки ~650 токенов (перекрытие ~100)
-data/knowledge/cards/*.md ───────────────► по фрагменту на карточку
-                                   │
-               KnowledgeFragment(fragment_id, text, source, metadata{paper, section, page})
-                                   │
-        ┌──────────────────────────┴───────────────────────┐
- InMemoryKnowledgeBase (BM25, тесты/офлайн)   PineconeKnowledgeBase (integrated embedding)
+data/knowledge/cards/*.md  (YAML front matter: id, title, source, tags + markdown)
+        │  CardDirectorySource.cards()   — парсинг и проверка каждой карточки
+        ▼
+list[KnowledgeCard]
+        │  build_knowledge_pack(max_chars) — уникальность id, сортировка по id, лимит размера
+        ▼
+KnowledgePack(text, cards, sha256) ──► prompts/scientist.md + "\n\n" + pack.text
 ```
-Интерфейс один: `search(query, top_k, filters) -> list[KnowledgeFragment]`. Scientist
-обязан цитировать `fragment_id`, и код проверяет, что каждая цитата была в выдаче поиска.
+- Проверки при загрузке (ошибка = `KnowledgePackError` с именем файла): front matter
+  есть и валиден, поля `id`/`title`/`source` заполнены, лишних ключей нет, `id` в
+  snake_case и уникален, тело не пустое, итоговый текст ≤
+  `EXPSYS_KNOWLEDGE_PACK_MAX_CHARS` (по умолчанию 60 000 символов ≈ 15k токенов).
+- Текст пакета детерминирован (карточки по алфавиту id): одинаковые карточки → один и
+  тот же промпт и sha256. Точный текст сохраняется в `runs/<id>/knowledge_pack.md`, хэш —
+  в `state.json`.
+- Scientist цитирует `card_id`; код проверяет, что каждая цитата — существующая карточка
+  пакета, и что есть хотя бы одна цитата.
+- Интерфейс источника — `KnowledgeSource.cards() -> list[KnowledgeCard]` (сейчас каталог;
+  при росте объёма можно вернуть поиск, см. DEVLOG).
+
+**Почему без RAG.** Статей три, карточек меньше десяти — весь объём помещается в промпт. Поиск
+только добавлял риск, что нужная формула не попадёт в выдачу, и делал поведение
+Scientist'а зависимым от индекса.
 
 ### 4.11 Агенты (`agents/`, `prompts/`)
 Каждый агент = системный промпт (`prompts/<agent>.md`) + функция «контекст →
@@ -177,7 +192,7 @@ data/knowledge/cards/*.md ───────────────► по 
 
 | Агент | Видит | Выдаёт | Проверки в коде |
 |---|---|---|---|
-| Scientist | задача, фрагменты KB, каталог метрик, (REMODEL: прошлая спецификация, обоснование, история) | `ScientificSpecification` | цитаты ⊆ выдача поиска; метрики ∈ каталог; спецификация изменилась |
+| Scientist | задача, knowledge pack (в системном промпте), каталог метрик, (REMODEL: прошлая спецификация, обоснование, история) | `ScientificSpecification` | цитаты ⊆ id карточек пакета; метрики ∈ каталог; спецификация изменилась |
 | Experiment | спецификация, устройства/процедуры **без диапазонов**, (REPLAN: прошлый план, рекомендации, история) | `ExperimentPlan` | устройства существуют; план изменился |
 | Runner | план, **полный** реестр, статусы, нарушения валидатора | `CommandBatch` | step_id из плана; устройство доступно; + Safety Validator |
 | Analyst | спецификация, план, сводка исполнения, Metrics, история | `AnalysisReport` | referenced_metrics ⊆ Metrics; **DONE → REPLAN, если критерии не выполнены** |
@@ -204,13 +219,12 @@ route: DONE → finalize        REPLAN  → experiment (iteration+1)
 
 ### 4.13 Сценарии и сборка (`scenarios.py`, `app.py`, `configs/scenarios/`)
 Сценарий = задача + `SimulationWorld` + (для FakeLLM) ответы агентов. `app.run_task`
-собирает registry → backend → KB → LLM-клиенты (с логированием и бюджетом) → оркестратор;
+собирает knowledge pack → registry → backend → LLM-клиенты (с логированием и бюджетом) → оркестратор;
 CLI и e2e-тесты используют одну и ту же сборку.
 
 ### 4.14 CLI (`cli.py`)
-- `expsys ingest data/papers [--kb memory|pinecone]` — индекс статей и карточек;
-- `expsys run "<задача>" --llm fake|openrouter --kb memory|pinecone [--max-iterations N]
-  [--scenario <name>] [--approve]`;
+- `expsys run "<задача>" --llm fake|openrouter [--max-iterations N] [--scenario <name>]
+  [--approve]`;
 - `expsys show <experiment_id>`, `expsys scenarios`.
 Ошибки конфигурации (нет ключа, нет модели, неизвестный сценарий) выдаются одной
 строкой и проверяются **до** создания каталога прогона.
@@ -233,7 +247,7 @@ CLI и e2e-тесты используют одну и ту же сборку.
 | Лимит итераций и вызовов LLM | `route` → ITERATION_LIMIT; `CallBudget` → FAILED |
 | Большие массивы не идут в LLM | backend → `.npy` + `data_ref`; сводки для агентов содержат только скаляры |
 | `extra="forbid"` | базовый `Contract` всех схем |
-| Цитаты Scientist реальны | проверка в `run_scientist` по результатам поиска |
+| Цитаты Scientist реальны | проверка в `run_scientist`: каждый `card_id` есть в knowledge pack |
 | DONE только при выполненных критериях | `run_analyst` переводит DONE → REPLAN |
 
 ## 7. Известные ограничения (MVP)
@@ -246,8 +260,9 @@ CLI и e2e-тесты используют одну и ту же сборку.
   железе ими станет калиброванная T.
 - Точный основной уровень — только для N ≤ 20; для больших N используются
   `plateau_fraction`, `replica_overlap`, `target_signal`.
-- Tool-calling режим LLM, DPR/MPR, LLM-формулируемые поисковые запросы Scientist —
-  `TODO(later)`.
+- Tool-calling режим LLM, DPR/MPR — `TODO(later)`.
+- Knowledge pack ограничен размером промпта; при росте базы знаний понадобится вернуть
+  поиск (см. DEVLOG, «Как вернуть RAG»).
 - Оркестратор синхронный; approval — callback в CLI (для API понадобится `interrupt`).
 
 ## 8. Что дальше

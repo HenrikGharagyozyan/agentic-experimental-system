@@ -15,7 +15,6 @@ runner = CliRunner()
 def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.chdir(REPO)  # default config paths are relative to the repository root
     monkeypatch.setenv("EXPSYS_RUNS_DIR", str(tmp_path / "runs"))
-    monkeypatch.setenv("EXPSYS_KB_INDEX_PATH", str(tmp_path / "index" / "fragments.jsonl"))
     for name in ("OPENROUTER_API_KEY", "DEFAULT_MODEL", "EXPSYS_REQUIRE_APPROVAL"):
         monkeypatch.delenv(name, raising=False)
     return tmp_path
@@ -25,13 +24,6 @@ def test_scenarios_lists_demos() -> None:
     result = runner.invoke(app, ["scenarios"])
     assert result.exit_code == 0
     assert "ising_ground_state" in result.output and "two_foci_coupling" in result.output
-
-
-def test_ingest_cards_into_memory_index(isolated: Path) -> None:
-    result = runner.invoke(app, ["ingest", str(isolated / "no-papers")])
-    assert result.exit_code == 0, result.output
-    assert "карточек: 8" in result.output
-    assert (isolated / "index" / "fragments.jsonl").is_file()
 
 
 def test_run_and_show(isolated: Path) -> None:

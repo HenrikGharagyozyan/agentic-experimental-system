@@ -33,6 +33,3 @@ runs/
 
 # Scientific papers (copyrighted PDFs) — kept locally, not committed
 data/papers/*.pdf
-
-# Derived local Knowledge Base index (rebuilt by `expsys ingest`)
-data/knowledge/index/

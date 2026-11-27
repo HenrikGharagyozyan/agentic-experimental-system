@@ -8,10 +8,9 @@ from typing import Annotated
 
 import typer
 
-from experimental_system.app import build_knowledge_base, run_task, scenario_task
+from experimental_system.app import run_task, scenario_task
 from experimental_system.config import ConfigError, Settings
-from experimental_system.knowledge.ingest import ingest as ingest_fragments
-from experimental_system.knowledge.memory import InMemoryKnowledgeBase
+from experimental_system.knowledge.cards import KnowledgePackError
 from experimental_system.scenarios import ScenarioError, list_scenarios, load_scenario
 from experimental_system.schemas.devices import DeviceCommand
 from experimental_system.schemas.state import ExperimentState
@@ -30,11 +29,6 @@ class LLMChoice(StrEnum):
     openrouter = "openrouter"
 
 
-class KBChoice(StrEnum):
-    memory = "memory"
-    pinecone = "pinecone"
-
-
 def _settings() -> Settings:
     settings = Settings()
     logging.basicConfig(level=settings.log_level, format="%(levelname)s %(name)s: %(message)s")
@@ -44,39 +38,6 @@ def _settings() -> Settings:
 def _fail(message: str) -> typer.Exit:
     typer.secho(f"Ошибка: {message}", fg=typer.colors.RED, err=True)
     return typer.Exit(code=1)
-
-
-@app.command()
-def ingest(
-    papers_dir: Annotated[Path, typer.Argument(help="Directory with PDF papers")] = Path(
-        "data/papers"
-    ),
-    kb: Annotated[KBChoice, typer.Option(help="Where to index")] = KBChoice.memory,
-    cards_dir: Annotated[Path | None, typer.Option(help="Knowledge cards directory")] = None,
-) -> None:
-    """Index PDF papers + knowledge cards into the Knowledge Base."""
-    settings = _settings()
-    fragments = ingest_fragments(papers_dir, cards_dir or settings.kb_cards_dir)
-    papers = {f.metadata.get("file") for f in fragments if f.metadata.get("kind") == "paper"}
-    cards = sum(1 for f in fragments if f.metadata.get("kind") == "card")
-    if kb is KBChoice.memory:
-        InMemoryKnowledgeBase(fragments).save_jsonl(settings.kb_index_path)
-        where = str(settings.kb_index_path)
-    else:
-        from experimental_system.knowledge.pinecone_kb import PineconeKnowledgeBase
-
-        try:
-            index = PineconeKnowledgeBase.from_settings(settings, create=True)
-        except ConfigError as exc:
-            raise _fail(str(exc)) from exc
-        index.upsert(fragments)
-        where = (
-            f"Pinecone index {settings.pinecone_index!r}, namespace {settings.pinecone_namespace!r}"
-        )
-    typer.echo(
-        f"Проиндексировано фрагментов: {len(fragments)} (статей: {len(papers)}, карточек: {cards})"
-        f" -> {where}"
-    )
 
 
 @app.command()
@@ -102,7 +63,6 @@ def run(
         str | None, typer.Argument(help="Task text (default: the scenario's task)")
     ] = None,
     llm: Annotated[LLMChoice, typer.Option(help="LLM backend")] = LLMChoice.fake,
-    kb: Annotated[KBChoice, typer.Option(help="Knowledge Base")] = KBChoice.memory,
     scenario: Annotated[
         str | None, typer.Option(help="Scenario: simulated world (+ scripted answers for fake)")
     ] = None,
@@ -131,17 +91,15 @@ def run(
     request = scenario_task(sc, task) if sc is not None else TaskRequest(description=task or "")
     need_approval = settings.require_approval if approve is None else approve
     try:
-        knowledge = build_knowledge_base(kb.value, settings)
         result = run_task(
             request,
             settings=settings,
             llm_kind=llm.value,
-            kb=knowledge,
             scenario=sc,
             max_iterations=max_iterations,
             approver=_confirm if need_approval else None,
         )
-    except ConfigError as exc:
+    except (ConfigError, KnowledgePackError) as exc:
         raise _fail(str(exc)) from exc
     _print_summary(result.state, result.store.dir)
 

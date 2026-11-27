@@ -122,23 +122,21 @@ def render_report(state: ExperimentState) -> str:
     for note in state.notes:
         lines.append(f"- примечание: {note}")
     lines.append("")
-    cited = {c.fragment_id: c.note for r in state.history for c in r.specification.citations}
+    cited = {c.card_id: c.note for r in state.history for c in r.specification.citations}
     if spec is not None:
-        cited.update({c.fragment_id: c.note for c in spec.citations})
+        cited.update({c.card_id: c.note for c in spec.citations})
     if cited:
-        by_id = {f.fragment_id: f for f in state.fragments}
-        lines += ["## Источники (цитаты Scientist)", ""]
-        for fid, cite_note in cited.items():
-            frag = by_id.get(fid)
-            where = ""
-            if frag is not None:
-                page = frag.metadata.get("page")
-                section = frag.metadata.get("section")
-                where = (
-                    f" — {frag.source}"
-                    + (f", {section}" if section else "")
-                    + (f", стр. {page}" if page else "")
-                )
-            lines.append(f"- `{fid}`{where}" + (f" ({cite_note})" if cite_note else ""))
+        by_id = {card.card_id: card for card in state.knowledge_cards}
+        lines += ["## Источники (карточки knowledge pack, процитированные Scientist)", ""]
+        for card_id, cite_note in cited.items():
+            card = by_id.get(card_id)
+            where = f" — {card.title}. {card.source}" if card is not None else ""
+            lines.append(f"- `{card_id}`{where}" + (f" ({cite_note})" if cite_note else ""))
         lines.append("")
+    if state.knowledge_pack_sha256:
+        lines += [
+            f"Knowledge pack: {len(state.knowledge_cards)} карточек, sha256 "
+            f"`{state.knowledge_pack_sha256[:16]}…` (полный текст — `knowledge_pack.md`).",
+            "",
+        ]
     return "\n".join(lines)
