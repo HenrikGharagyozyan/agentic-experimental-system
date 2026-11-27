@@ -157,4 +157,18 @@ Agent ──► LoggedLLM (бюджет вызовов + llm_calls.jsonl)
 `DEFAULT_MODEL`; имён моделей в коде нет. `FakeLLM` проигрывает ответы из сценария и
 валидирует их так же строго, поэтому весь цикл работает офлайн и детерминированно.
 
+### 4.10 Knowledge Base (`knowledge/`)
+Только научные знания и только для Scientist (никогда не источник фактов об устройствах).
+```
+data/papers/*.pdf ──pymupdf──► разделы ──► чанки ~650 токенов (перекрытие ~100)
+data/knowledge/cards/*.md ───────────────► по фрагменту на карточку
+                                   │
+               KnowledgeFragment(fragment_id, text, source, metadata{paper, section, page})
+                                   │
+        ┌──────────────────────────┴───────────────────────┐
+ InMemoryKnowledgeBase (BM25, тесты/офлайн)   PineconeKnowledgeBase (integrated embedding)
+```
+Интерфейс один: `search(query, top_k, filters) -> list[KnowledgeFragment]`. Scientist
+обязан цитировать `fragment_id`, и код проверяет, что каждая цитата была в выдаче поиска.
+
 <!-- Следующие разделы добавляются по мере реализации этапов. -->
