@@ -16,8 +16,11 @@ class Measurement(Contract):
     unit: str | None = None
     step_id: Identifier | None = None
     device_id: Identifier | None = None
-    # TODO(later): opaque reference to large array data held by Storage (camera frames,
-    # SLM masks). LLMs never see or generate raw arrays.
+    # Position of the producing command in the executed batch: several commands may share
+    # one step_id, so derived metrics group measurements by command, not by step.
+    command_index: int | None = Field(default=None, ge=0)
+    # Opaque reference to large array data held by Storage (camera frames, SLM masks,
+    # matrices), e.g. "arrays/it01_0003_s1_tm_estimate.npy". LLMs never see raw arrays.
     data_ref: str | None = None
 
 

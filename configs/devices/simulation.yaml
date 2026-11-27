@@ -93,6 +93,7 @@ devices:
           - {name: n_targets, kind: int, minimum: 1, maximum: 2, required: false, default: 1}
           - {name: target_separation, kind: float, unit: px, minimum: 0.0, maximum: 16.0, required: false, default: 0.0, description: "distance between the two target modes, in SLM macro-pixels"}
           - {name: n_replicas, kind: int, minimum: 1, maximum: 20, required: false, default: 1, description: "independent runs from different random starts"}
+          - {name: bias, kind: choice, choices: [none, calibrated_tm], required: false, default: none, description: "calibrated_tm: add the phase bias -Arg(sum of target rows of the calibrated T) so ground states are magnetized regions (Jacucci et al. 2022 / Delloye et al.); needs a calibration for the current medium setting"}
           - {name: initial_batch_fraction, kind: float, minimum: 0.0, maximum: 0.5, required: false, default: 0.12, description: "batch_flip: initial fraction of spins flipped together"}
           - {name: temperature_start, kind: float, minimum: 0.0001, maximum: 10.0, required: false, default: 0.5, description: "simulated_annealing, relative to mean intensity"}
           - {name: temperature_end, kind: float, minimum: 0.0001, maximum: 10.0, required: false, default: 0.005}

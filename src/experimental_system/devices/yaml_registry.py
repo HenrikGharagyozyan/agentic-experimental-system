@@ -4,6 +4,7 @@ from pathlib import Path
 
 import yaml
 
+from experimental_system.devices.registry import operation_defaults
 from experimental_system.devices.validator import check_value
 from experimental_system.schemas.common import ScalarValue
 from experimental_system.schemas.devices import DeviceSpec, RegistryDocument
@@ -58,8 +59,4 @@ class YamlDeviceRegistry:
 
     def defaults(self, device_id: str, operation: str) -> dict[str, ScalarValue]:
         """Defaults of the optional parameters of one operation (unknown op -> {})."""
-        device = self.get_device(device_id)
-        op = device.operation(operation) if device else None
-        if op is None:
-            return {}
-        return {p.name: p.default for p in op.parameters if p.default is not None}
+        return operation_defaults(self, device_id, operation)
