@@ -32,7 +32,7 @@ from experimental_system.schemas.execution import (
     ExecutionStatus,
     Measurement,
 )
-from experimental_system.schemas.knowledge import KnowledgeFragment
+from experimental_system.schemas.knowledge import KnowledgeCard
 from experimental_system.schemas.plan import ExperimentPlan, PlanStep
 from experimental_system.schemas.state import (
     ExperimentState,
@@ -66,7 +66,7 @@ __all__ = [
     "ExperimentStatus",
     "Identifier",
     "IterationRecord",
-    "KnowledgeFragment",
+    "KnowledgeCard",
     "MathModel",
     "Measurement",
     "Metrics",

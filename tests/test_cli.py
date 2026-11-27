@@ -15,7 +15,6 @@ runner = CliRunner()
 def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.chdir(REPO)  # default config paths are relative to the repository root
     monkeypatch.setenv("EXPSYS_RUNS_DIR", str(tmp_path / "runs"))
-    monkeypatch.setenv("EXPSYS_KB_INDEX_PATH", str(tmp_path / "index" / "fragments.jsonl"))
     for name in ("OPENROUTER_API_KEY", "DEFAULT_MODEL", "EXPSYS_REQUIRE_APPROVAL"):
         monkeypatch.delenv(name, raising=False)
     return tmp_path
@@ -25,13 +24,6 @@ def test_scenarios_lists_demos() -> None:
     result = runner.invoke(app, ["scenarios"])
     assert result.exit_code == 0
     assert "ising_ground_state" in result.output and "two_foci_coupling" in result.output
-
-
-def test_ingest_cards_into_memory_index(isolated: Path) -> None:
-    result = runner.invoke(app, ["ingest", str(isolated / "no-papers")])
-    assert result.exit_code == 0, result.output
-    assert "карточек: 8" in result.output
-    assert (isolated / "index" / "fragments.jsonl").is_file()
 
 
 def test_run_and_show(isolated: Path) -> None:
@@ -63,3 +55,30 @@ def test_config_errors_are_clean(isolated: Path) -> None:
     assert not (isolated / "runs").exists()  # nothing created before config is valid
     unknown = runner.invoke(app, ["run", "--scenario", "nope"])
     assert unknown.exit_code == 1 and "unknown scenario" in unknown.output
+
+
+def test_knowledge_prints_exact_pack(isolated: Path) -> None:
+    from experimental_system.agents import scientist_system_prompt
+    from experimental_system.app import knowledge_pack
+    from experimental_system.config import Settings
+
+    pack = knowledge_pack(Settings(_env_file=None))
+    result = runner.invoke(app, ["knowledge"])
+    assert result.exit_code == 0
+    assert result.output == pack.text  # byte-for-byte what the Scientist sees
+    full = runner.invoke(app, ["knowledge", "--full"])
+    assert full.exit_code == 0 and full.output == scientist_system_prompt(pack)
+    assert full.output.startswith("# Role: Scientist")
+
+
+def test_knowledge_errors_are_clean(isolated: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EXPSYS_KNOWLEDGE_PACK_MAX_CHARS", "100")
+    too_big = runner.invoke(app, ["knowledge"])
+    assert too_big.exit_code == 1 and "limit is 100" in too_big.output
+    run = runner.invoke(app, ["run", "--scenario", "runner_out_of_range"])
+    assert run.exit_code == 1 and "limit is 100" in run.output
+    assert not (isolated / "runs").exists()
+    monkeypatch.setenv("EXPSYS_KNOWLEDGE_CARDS_DIR", str(isolated / "nowhere"))
+    monkeypatch.delenv("EXPSYS_KNOWLEDGE_PACK_MAX_CHARS")
+    missing = runner.invoke(app, ["knowledge"])
+    assert missing.exit_code == 1 and "not found" in missing.output

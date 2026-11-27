@@ -1,13 +1,13 @@
 """Minimal fakes satisfy the Protocols (checked by mypy statically and isinstance at runtime)."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 
 import pytest
 from pydantic import BaseModel
 
 from experimental_system.backends import ExecutionBackend
 from experimental_system.devices import DeviceRegistry
-from experimental_system.knowledge import KnowledgeBase
+from experimental_system.knowledge import KnowledgeSource
 from experimental_system.llm import ChatMessage, LLMClient, StructuredOutputError
 from experimental_system.schemas import (
     AnalysisReport,
@@ -16,7 +16,7 @@ from experimental_system.schemas import (
     DeviceStatus,
     ExecutionResult,
     ExperimentPlan,
-    KnowledgeFragment,
+    KnowledgeCard,
 )
 from factories import make_device, make_execution, make_plan, make_report
 
@@ -33,18 +33,12 @@ class _CannedLLM:
         return self._response
 
 
-class _ListKnowledgeBase:
-    def __init__(self, fragments: list[KnowledgeFragment]) -> None:
-        self._fragments = fragments
+class _ListSource:
+    def __init__(self, cards: list[KnowledgeCard]) -> None:
+        self._cards = cards
 
-    def search(
-        self,
-        query: str,
-        *,
-        top_k: int = 5,
-        filters: Mapping[str, str | int | float | bool] | None = None,
-    ) -> list[KnowledgeFragment]:
-        return [f for f in self._fragments if query.lower() in f.text.lower()][:top_k]
+    def cards(self) -> list[KnowledgeCard]:
+        return list(self._cards)
 
 
 class _StaticBackend:
@@ -83,11 +77,11 @@ def test_llm_fake_reports_wrong_response_model() -> None:
         llm.generate([], ExperimentPlan)
 
 
-def test_knowledge_base_fake_satisfies_protocol() -> None:
-    fragment = KnowledgeFragment(fragment_id="f1", text="Ising model energy", source="paper")
-    kb: KnowledgeBase = _ListKnowledgeBase([fragment])
-    assert isinstance(kb, KnowledgeBase)
-    assert kb.search("ising") == [fragment]
+def test_knowledge_source_fake_satisfies_protocol() -> None:
+    card = KnowledgeCard(card_id="ising", title="Ising", source="paper", body="H = -I")
+    source: KnowledgeSource = _ListSource([card])
+    assert isinstance(source, KnowledgeSource)
+    assert source.cards() == [card]
 
 
 def test_backend_fake_satisfies_protocol() -> None:

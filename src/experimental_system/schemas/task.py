@@ -25,9 +25,9 @@ class TaskRequest(Contract):
 
 
 class Citation(Contract):
-    """Reference to a Knowledge Base fragment the Scientist relied on."""
+    """Reference to a knowledge card the Scientist relied on (checked in code)."""
 
-    fragment_id: NonEmptyStr
+    card_id: Identifier
     note: str | None = None
 
 
@@ -62,5 +62,3 @@ class ScientificSpecification(Contract):
     assumptions: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
-    # TODO(later): the Scientist agent checks in code that every citation.fragment_id
-    # was actually returned by KnowledgeBase.search in this run.

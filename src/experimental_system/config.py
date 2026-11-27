@@ -2,7 +2,7 @@
 
 Application variables use the ``EXPSYS_`` prefix, e.g. ``EXPSYS_LOG_LEVEL=DEBUG``.
 Provider variables keep their conventional names (``OPENROUTER_API_KEY``,
-``DEFAULT_MODEL``, ``SCIENTIST_MODEL``, ``PINECONE_API_KEY``, ...).
+``DEFAULT_MODEL``, ``SCIENTIST_MODEL``, ...).
 Real environment variables take precedence over values in `.env`.
 
 Model names are never hard-coded: they come only from these settings / `.env`.
@@ -69,15 +69,9 @@ class Settings(BaseSettings):
     llm_timeout_s: float = Field(default=120.0, gt=0)
     llm_temperature: float = Field(default=0.2, ge=0, le=2)
 
-    # --- Knowledge Base (Pinecone, integrated embedding) ----------------------------------
-    pinecone_api_key: SecretStr | None = Field(default=None, validation_alias="PINECONE_API_KEY")
-    pinecone_index: str | None = Field(default=None, validation_alias="PINECONE_INDEX")
-    pinecone_embed_model: str | None = Field(default=None, validation_alias="PINECONE_EMBED_MODEL")
-    pinecone_cloud: str = Field(default="aws", validation_alias="PINECONE_CLOUD")
-    pinecone_region: str = Field(default="us-east-1", validation_alias="PINECONE_REGION")
-    pinecone_namespace: str = Field(default="papers", validation_alias="PINECONE_NAMESPACE")
-    kb_index_path: Path = Path("data/knowledge/index/fragments.jsonl")
-    kb_cards_dir: Path = Path("data/knowledge/cards")
+    # --- Scientific knowledge (static knowledge pack in the Scientist's prompt) -----------
+    knowledge_cards_dir: Path = Path("data/knowledge/cards")
+    knowledge_pack_max_chars: int = Field(default=60_000, gt=0)  # ~15k tokens
 
     # --- tests -------------------------------------------------------------------------------
     run_live: bool = False  # EXPSYS_RUN_LIVE=1 enables @pytest.mark.live tests
@@ -89,9 +83,6 @@ class Settings(BaseSettings):
         "experiment_model",
         "runner_model",
         "analyst_model",
-        "pinecone_api_key",
-        "pinecone_index",
-        "pinecone_embed_model",
         mode="before",
     )
     @classmethod

@@ -5,14 +5,15 @@ Used by the CLI and by the end-to-end tests, so both exercise exactly the same a
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 from experimental_system.backends.simulation import SimulationBackend, SimulationWorld
 from experimental_system.config import Settings
 from experimental_system.devices.yaml_registry import YamlDeviceRegistry
-from experimental_system.knowledge.base import KnowledgeBase
-from experimental_system.knowledge.ingest import ingest
-from experimental_system.knowledge.memory import InMemoryKnowledgeBase
+from experimental_system.knowledge.cards import (
+    CardDirectorySource,
+    KnowledgePack,
+    load_knowledge_pack,
+)
 from experimental_system.llm.factory import LLMKind, build_clients, preflight
 from experimental_system.llm.tracking import CallBudget
 from experimental_system.orchestrator import Approver, Orchestrator, OrchestratorDeps
@@ -21,8 +22,6 @@ from experimental_system.schemas.common import new_id, utc_now
 from experimental_system.schemas.state import ExperimentState
 from experimental_system.schemas.task import TaskRequest
 from experimental_system.storage.run_store import RunStore
-
-KBKind = Literal["memory", "pinecone"]
 
 
 @dataclass(frozen=True)
@@ -35,15 +34,12 @@ def new_experiment_id() -> str:
     return f"{utc_now():%Y%m%d-%H%M%S}-{new_id()[:6]}"
 
 
-def build_knowledge_base(kind: KBKind, settings: Settings) -> KnowledgeBase:
-    if kind == "pinecone":
-        from experimental_system.knowledge.pinecone_kb import PineconeKnowledgeBase
-
-        return PineconeKnowledgeBase.from_settings(settings)
-    if settings.kb_index_path.is_file():
-        return InMemoryKnowledgeBase.load_jsonl(settings.kb_index_path)
-    # No local index yet (`expsys ingest` not run): use the curated cards only.
-    return InMemoryKnowledgeBase(ingest(None, settings.kb_cards_dir))
+def knowledge_pack(settings: Settings) -> KnowledgePack:
+    """The Scientist's knowledge pack from the configured cards directory (validated)."""
+    return load_knowledge_pack(
+        CardDirectorySource(settings.knowledge_cards_dir),
+        max_chars=settings.knowledge_pack_max_chars,
+    )
 
 
 def run_task(
@@ -51,7 +47,7 @@ def run_task(
     *,
     settings: Settings,
     llm_kind: LLMKind,
-    kb: KnowledgeBase,
+    knowledge: KnowledgePack | None = None,
     scenario: Scenario | None = None,
     max_iterations: int | None = None,
     approver: Approver | None = None,
@@ -59,6 +55,7 @@ def run_task(
     runs_dir: Path | None = None,
 ) -> RunResult:
     preflight(llm_kind, settings)
+    knowledge = knowledge or knowledge_pack(settings)  # fails before a run dir exists
     experiment_id = experiment_id or new_experiment_id()
     store = RunStore(runs_dir or settings.runs_dir, experiment_id)
     registry = YamlDeviceRegistry.from_file(settings.registry_path)
@@ -81,7 +78,7 @@ def run_task(
     orchestrator = Orchestrator(
         OrchestratorDeps(
             llms=llms,
-            kb=kb,
+            knowledge=knowledge,
             registry=registry,
             backend=backend,
             store=store,

@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from experimental_system.app import build_knowledge_base, run_task, scenario_task
+from experimental_system.app import knowledge_pack, run_task, scenario_task
 from experimental_system.config import Settings
-from experimental_system.knowledge import KnowledgeBase
+from experimental_system.knowledge import KnowledgePack
 from experimental_system.scenarios import Scenario, ScenarioError, list_scenarios, load_scenario
 from experimental_system.schemas import Decision, DeviceCommand, ExperimentStatus
 
@@ -22,20 +22,19 @@ def settings() -> Settings:
         _env_file=None,
         registry_path=REPO / "configs/devices/simulation.yaml",
         scenarios_dir=REPO / "configs/scenarios",
-        kb_cards_dir=REPO / "data/knowledge/cards",
-        kb_index_path=REPO / "does-not-exist.jsonl",  # cards-only KB: independent of local index
+        knowledge_cards_dir=REPO / "data/knowledge/cards",
     )
 
 
 @pytest.fixture(scope="module")
-def kb(settings: Settings) -> KnowledgeBase:
-    return build_knowledge_base("memory", settings)
+def kb(settings: Settings) -> KnowledgePack:
+    return knowledge_pack(settings)
 
 
 def _run(
     name: str,
     settings: Settings,
-    kb: KnowledgeBase,
+    kb: KnowledgePack,
     tmp_path: Path,
     *,
     scenario: Scenario | None = None,
@@ -46,7 +45,7 @@ def _run(
         scenario_task(sc),
         settings=settings,
         llm_kind="fake",
-        kb=kb,
+        knowledge=kb,
         scenario=sc,
         runs_dir=tmp_path,
         experiment_id="exp",
@@ -74,7 +73,7 @@ def test_all_scenarios_load(settings: Settings) -> None:
 
 
 def test_ising_ground_state_replan_then_done(
-    settings: Settings, kb: KnowledgeBase, tmp_path: Path
+    settings: Settings, kb: KnowledgePack, tmp_path: Path
 ) -> None:
     result = _run("ising_ground_state", settings, kb, tmp_path)
     state = result.state
@@ -103,13 +102,18 @@ def test_ising_ground_state_replan_then_done(
         "analyst",
     ]
     assert state.llm_calls == 7
+    pack_text = (run_dir / "knowledge_pack.md").read_text()
+    assert pack_text == kb.text  # the exact pack the Scientist saw is kept with the run
+    assert state.knowledge_pack_sha256 == kb.sha256
     report = (run_dir / "final_report.md").read_text()
-    assert "Итерация 1" in report and "card:ground_state_search" in report
+    assert (
+        "Итерация 1" in report and "ground_state_search" in report and "knowledge_pack.md" in report
+    )
     assert "energy_gap" in report and "REPLAN" in report
 
 
 def test_replan_context_contains_previous_plan_and_recommendations(
-    settings: Settings, kb: KnowledgeBase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    settings: Settings, kb: KnowledgePack, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Memory between iterations: on REPLAN the Experiment agent sees plan + history."""
     from experimental_system.llm import FakeLLM
@@ -129,7 +133,7 @@ def test_replan_context_contains_previous_plan_and_recommendations(
     assert '"history"' in seen[1] and "energy_gap" in seen[1]
 
 
-def test_tm_calibration_focusing(settings: Settings, kb: KnowledgeBase, tmp_path: Path) -> None:
+def test_tm_calibration_focusing(settings: Settings, kb: KnowledgePack, tmp_path: Path) -> None:
     state = _run("tm_calibration_focusing", settings, kb, tmp_path).state
     assert state.status is ExperimentStatus.DONE, state.errors
     metrics = state.history[-1].metrics
@@ -139,7 +143,7 @@ def test_tm_calibration_focusing(settings: Settings, kb: KnowledgeBase, tmp_path
     assert values["tm_correlation"] > 0.9
 
 
-def test_two_foci_coupling(settings: Settings, kb: KnowledgeBase, tmp_path: Path) -> None:
+def test_two_foci_coupling(settings: Settings, kb: KnowledgePack, tmp_path: Path) -> None:
     state = _run("two_foci_coupling", settings, kb, tmp_path).state
     assert state.status is ExperimentStatus.DONE, state.errors
     metrics = state.history[-1].metrics
@@ -149,7 +153,7 @@ def test_two_foci_coupling(settings: Settings, kb: KnowledgeBase, tmp_path: Path
 
 
 def test_runner_out_of_range_is_rejected_then_fixed(
-    settings: Settings, kb: KnowledgeBase, tmp_path: Path
+    settings: Settings, kb: KnowledgePack, tmp_path: Path
 ) -> None:
     state = _run("runner_out_of_range", settings, kb, tmp_path).state
     assert state.status is ExperimentStatus.DONE, state.errors
@@ -162,7 +166,7 @@ def test_runner_out_of_range_is_rejected_then_fixed(
 
 
 def test_runner_never_fixes_command_fails(
-    settings: Settings, kb: KnowledgeBase, tmp_path: Path
+    settings: Settings, kb: KnowledgePack, tmp_path: Path
 ) -> None:
     bad = load_scenario(settings.scenarios_dir, "runner_out_of_range").llm["runner"][0]
     sc = _modified(settings, "runner_out_of_range", runner=[bad, bad, bad])
@@ -172,13 +176,13 @@ def test_runner_never_fixes_command_fails(
     assert state.history and state.history[0].execution is None  # nothing executed
 
 
-def test_iteration_limit(settings: Settings, kb: KnowledgeBase, tmp_path: Path) -> None:
+def test_iteration_limit(settings: Settings, kb: KnowledgePack, tmp_path: Path) -> None:
     state = _run("ising_ground_state", settings, kb, tmp_path, max_iterations=1).state
     assert state.status is ExperimentStatus.ITERATION_LIMIT
     assert len(state.history) == 1
 
 
-def test_llm_call_budget(settings: Settings, kb: KnowledgeBase, tmp_path: Path) -> None:
+def test_llm_call_budget(settings: Settings, kb: KnowledgePack, tmp_path: Path) -> None:
     tight = settings.model_copy(update={"max_llm_calls": 3})
     state = _run("ising_ground_state", tight, kb, tmp_path).state
     assert state.status is ExperimentStatus.FAILED
@@ -187,7 +191,7 @@ def test_llm_call_budget(settings: Settings, kb: KnowledgeBase, tmp_path: Path) 
 
 
 def test_exhausted_fake_llm_fails_with_history(
-    settings: Settings, kb: KnowledgeBase, tmp_path: Path
+    settings: Settings, kb: KnowledgePack, tmp_path: Path
 ) -> None:
     sc = load_scenario(settings.scenarios_dir, "ising_ground_state")
     data = sc.model_dump(mode="json")
@@ -200,7 +204,7 @@ def test_exhausted_fake_llm_fails_with_history(
 
 
 def test_done_overridden_when_criteria_unmet(
-    settings: Settings, kb: KnowledgeBase, tmp_path: Path
+    settings: Settings, kb: KnowledgePack, tmp_path: Path
 ) -> None:
     sc = load_scenario(settings.scenarios_dir, "ising_ground_state")
     data = sc.model_dump(mode="json")
@@ -212,7 +216,7 @@ def test_done_overridden_when_criteria_unmet(
     assert any("not all success criteria are met" in n for n in state.notes)
 
 
-def test_approval_rejected_aborts(settings: Settings, kb: KnowledgeBase, tmp_path: Path) -> None:
+def test_approval_rejected_aborts(settings: Settings, kb: KnowledgePack, tmp_path: Path) -> None:
     asked: list[int] = []
 
     def deny(commands: Sequence[DeviceCommand]) -> bool:
@@ -225,6 +229,6 @@ def test_approval_rejected_aborts(settings: Settings, kb: KnowledgeBase, tmp_pat
     assert state.history[0].execution is None
 
 
-def test_approval_granted_runs(settings: Settings, kb: KnowledgeBase, tmp_path: Path) -> None:
+def test_approval_granted_runs(settings: Settings, kb: KnowledgePack, tmp_path: Path) -> None:
     state = _run("runner_out_of_range", settings, kb, tmp_path, approver=lambda c: True).state
     assert state.status is ExperimentStatus.DONE

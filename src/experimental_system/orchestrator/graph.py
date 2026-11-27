@@ -34,7 +34,7 @@ from experimental_system.backends.base import ExecutionBackend
 from experimental_system.config import AgentName
 from experimental_system.devices.registry import DeviceRegistry
 from experimental_system.devices.validator import SafetyValidator, all_accepted
-from experimental_system.knowledge.base import KnowledgeBase
+from experimental_system.knowledge.cards import KnowledgePack
 from experimental_system.llm.base import LLMClient
 from experimental_system.llm.tracking import CallBudget
 from experimental_system.orchestrator.report import render_report
@@ -58,7 +58,7 @@ class GraphState(TypedDict):
 @dataclass
 class OrchestratorDeps:
     llms: dict[AgentName, LLMClient]
-    kb: KnowledgeBase
+    knowledge: KnowledgePack
     registry: DeviceRegistry
     backend: ExecutionBackend
     store: RunStore
@@ -79,8 +79,13 @@ class Orchestrator:
 
     def run(self, task: TaskRequest, *, max_iterations: int, experiment_id: str) -> ExperimentState:
         state = ExperimentState(
-            experiment_id=experiment_id, task=task, max_iterations=max_iterations
+            experiment_id=experiment_id,
+            task=task,
+            max_iterations=max_iterations,
+            knowledge_cards=list(self.deps.knowledge.cards),
+            knowledge_pack_sha256=self.deps.knowledge.sha256,
         )
+        self.deps.store.write_text("knowledge_pack.md", self.deps.knowledge.text)
         self.deps.store.save_state(state)
         per_iteration = 8 + 2 * MAX_RUNNER_CORRECTIONS
         result = self.graph.invoke(
@@ -168,9 +173,9 @@ class Orchestrator:
             if state.analysis and state.analysis.decision is Decision.REMODEL
             else None
         )
-        out = run_scientist(
+        spec = run_scientist(
             self.deps.llms["scientist"],
-            self.deps.kb,
+            self.deps.knowledge,
             ScientistInput(
                 task=state.task,
                 previous_specification=state.specification if remodel else None,
@@ -178,11 +183,7 @@ class Orchestrator:
                 history=self._history(state),
             ),
         )
-        known = {f.fragment_id for f in state.fragments}
-        fragments = state.fragments + [f for f in out.fragments if f.fragment_id not in known]
-        return state.model_copy(
-            update={"specification": out.specification, "fragments": fragments, **_cleared()}
-        )
+        return state.model_copy(update={"specification": spec, **_cleared()})
 
     def _experiment(self, state: ExperimentState) -> ExperimentState:
         assert state.specification is not None

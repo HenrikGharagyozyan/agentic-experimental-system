@@ -36,8 +36,8 @@ llm:
       open_questions:
         - "On hardware: which drive voltage of the liquid-crystal cell gives which interaction length?"
       citations:
-        - {fragment_id: "card:replica_overlap", note: "two foci, cluster coupling, |q|"}
-        - {fragment_id: "card:coupling_matrix_from_tm", note: "thin diffuser and interaction length; phase bias"}
+        - {card_id: replica_overlap, note: "two foci, cluster coupling, |q|"}
+        - {card_id: coupling_matrix_from_tm, note: "thin diffuser and interaction length; phase bias"}
 
   experiment:
     - rationale: >-

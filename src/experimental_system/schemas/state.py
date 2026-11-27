@@ -9,7 +9,7 @@ from experimental_system.schemas.analysis import AnalysisReport, Metrics
 from experimental_system.schemas.common import Contract, new_id
 from experimental_system.schemas.devices import DeviceCommand, ValidationResult
 from experimental_system.schemas.execution import ExecutionResult
-from experimental_system.schemas.knowledge import KnowledgeFragment
+from experimental_system.schemas.knowledge import KnowledgeCard
 from experimental_system.schemas.plan import ExperimentPlan
 from experimental_system.schemas.task import ScientificSpecification, TaskRequest
 
@@ -57,8 +57,9 @@ class ExperimentState(Contract):
 
     history: list[IterationRecord] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
-    # Knowledge fragments retrieved by the Scientist during the run (for citations/report).
-    fragments: list[KnowledgeFragment] = Field(default_factory=list)
+    # Knowledge pack the Scientist saw in this run (cards + sha256 of the exact text).
+    knowledge_cards: list[KnowledgeCard] = Field(default_factory=list)
+    knowledge_pack_sha256: str | None = None
     # Human-readable events decided by code (e.g. "DONE overridden to REPLAN").
     notes: list[str] = Field(default_factory=list)
     llm_calls: int = Field(default=0, ge=0)

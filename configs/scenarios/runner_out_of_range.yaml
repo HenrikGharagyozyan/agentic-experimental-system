@@ -22,7 +22,7 @@ llm:
       success_criteria:
         - {metric: energy_gap, op: "<=", target: 0.05}
       citations:
-        - {fragment_id: "card:ising_energy_from_intensity"}
+        - {card_id: ising_energy_from_intensity}
 
   experiment:
     - rationale: "Bright illumination and a 200-iteration batch-flip search (> 10N)."

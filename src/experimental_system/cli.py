@@ -8,10 +8,10 @@ from typing import Annotated
 
 import typer
 
-from experimental_system.app import build_knowledge_base, run_task, scenario_task
+from experimental_system.agents.scientist import scientist_system_prompt
+from experimental_system.app import knowledge_pack, run_task, scenario_task
 from experimental_system.config import ConfigError, Settings
-from experimental_system.knowledge.ingest import ingest as ingest_fragments
-from experimental_system.knowledge.memory import InMemoryKnowledgeBase
+from experimental_system.knowledge.cards import KnowledgePackError
 from experimental_system.scenarios import ScenarioError, list_scenarios, load_scenario
 from experimental_system.schemas.devices import DeviceCommand
 from experimental_system.schemas.state import ExperimentState
@@ -30,11 +30,6 @@ class LLMChoice(StrEnum):
     openrouter = "openrouter"
 
 
-class KBChoice(StrEnum):
-    memory = "memory"
-    pinecone = "pinecone"
-
-
 def _settings() -> Settings:
     settings = Settings()
     logging.basicConfig(level=settings.log_level, format="%(levelname)s %(name)s: %(message)s")
@@ -47,36 +42,19 @@ def _fail(message: str) -> typer.Exit:
 
 
 @app.command()
-def ingest(
-    papers_dir: Annotated[Path, typer.Argument(help="Directory with PDF papers")] = Path(
-        "data/papers"
-    ),
-    kb: Annotated[KBChoice, typer.Option(help="Where to index")] = KBChoice.memory,
-    cards_dir: Annotated[Path | None, typer.Option(help="Knowledge cards directory")] = None,
+def knowledge(
+    full: Annotated[
+        bool, typer.Option("--full", help="Print the Scientist's whole system prompt")
+    ] = False,
 ) -> None:
-    """Index PDF papers + knowledge cards into the Knowledge Base."""
+    """Print the knowledge pack exactly as the Scientist sees it (for human review)."""
     settings = _settings()
-    fragments = ingest_fragments(papers_dir, cards_dir or settings.kb_cards_dir)
-    papers = {f.metadata.get("file") for f in fragments if f.metadata.get("kind") == "paper"}
-    cards = sum(1 for f in fragments if f.metadata.get("kind") == "card")
-    if kb is KBChoice.memory:
-        InMemoryKnowledgeBase(fragments).save_jsonl(settings.kb_index_path)
-        where = str(settings.kb_index_path)
-    else:
-        from experimental_system.knowledge.pinecone_kb import PineconeKnowledgeBase
-
-        try:
-            index = PineconeKnowledgeBase.from_settings(settings, create=True)
-        except ConfigError as exc:
-            raise _fail(str(exc)) from exc
-        index.upsert(fragments)
-        where = (
-            f"Pinecone index {settings.pinecone_index!r}, namespace {settings.pinecone_namespace!r}"
-        )
-    typer.echo(
-        f"Проиндексировано фрагментов: {len(fragments)} (статей: {len(papers)}, карточек: {cards})"
-        f" -> {where}"
-    )
+    try:
+        pack = knowledge_pack(settings)
+    except KnowledgePackError as exc:
+        raise _fail(str(exc)) from exc
+    # Same functions as the Scientist uses: byte-for-byte the text in its system prompt.
+    typer.echo(scientist_system_prompt(pack) if full else pack.text, nl=False)
 
 
 @app.command()
@@ -102,7 +80,6 @@ def run(
         str | None, typer.Argument(help="Task text (default: the scenario's task)")
     ] = None,
     llm: Annotated[LLMChoice, typer.Option(help="LLM backend")] = LLMChoice.fake,
-    kb: Annotated[KBChoice, typer.Option(help="Knowledge Base")] = KBChoice.memory,
     scenario: Annotated[
         str | None, typer.Option(help="Scenario: simulated world (+ scripted answers for fake)")
     ] = None,
@@ -131,17 +108,15 @@ def run(
     request = scenario_task(sc, task) if sc is not None else TaskRequest(description=task or "")
     need_approval = settings.require_approval if approve is None else approve
     try:
-        knowledge = build_knowledge_base(kb.value, settings)
         result = run_task(
             request,
             settings=settings,
             llm_kind=llm.value,
-            kb=knowledge,
             scenario=sc,
             max_iterations=max_iterations,
             approver=_confirm if need_approval else None,
         )
-    except ConfigError as exc:
+    except (ConfigError, KnowledgePackError) as exc:
         raise _fail(str(exc)) from exc
     _print_summary(result.state, result.store.dir)
 

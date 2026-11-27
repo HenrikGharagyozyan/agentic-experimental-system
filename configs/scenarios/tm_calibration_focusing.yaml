@@ -33,8 +33,8 @@ llm:
       assumptions: ["The medium is stable during calibration and focusing."]
       open_questions: ["Real SLM phase response (calibration LUT) is not modelled."]
       citations:
-        - {fragment_id: "card:ggs_transmission_matrix", note: "GGS 2-1 at gamma = 4"}
-        - {fragment_id: "card:focusing_enhancement", note: "eta and its theoretical value"}
+        - {card_id: ggs_transmission_matrix, note: "GGS 2-1 at gamma = 4"}
+        - {card_id: focusing_enhancement, note: "eta and its theoretical value"}
 
   experiment:
     - rationale: "GGS 2-1 needs gamma >= 4 (Huang et al.); then focus on the central mode and compare with theory."

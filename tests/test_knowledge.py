@@ -1,153 +1,118 @@
-"""Knowledge Base: ingestion, cards, BM25 search, Pinecone record mapping (fake index)."""
+"""Knowledge pack: card parsing/validation, deterministic rendering, size limit, repo cards."""
 
-from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
-import pymupdf
 import pytest
 
-from experimental_system.config import Settings
-from experimental_system.knowledge import InMemoryKnowledgeBase, KnowledgeBase
-from experimental_system.knowledge.ingest import chunk_words, ingest, pdf_fragments
-from experimental_system.knowledge.pinecone_kb import PineconeKnowledgeBase, to_record
-from experimental_system.schemas import KnowledgeFragment
+from experimental_system.knowledge import (
+    CardDirectorySource,
+    KnowledgePackError,
+    KnowledgeSource,
+    build_knowledge_pack,
+    load_knowledge_pack,
+    parse_card,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 CARDS = REPO / "data" / "knowledge" / "cards"
-PAPERS = REPO / "data" / "papers"
+
+GOOD = """---
+id: toy_card
+title: Toy card
+source: "Someone et al. 2020, Eq. 3"
+tags: [toy]
+---
+Body with a formula E = T x.
+"""
 
 
-def _make_pdf(path: Path) -> None:
-    doc = pymupdf.open()  # type: ignore[no-untyped-call]  # pymupdf is partially typed
-    for page_text in (
-        "Front text about lasers.\n1. Introduction\n" + "light " * 300,
-        "2. Methods\n" + "speckle intensity camera " * 200 + "\nReferences\n[1] Someone 2020",
+def _write(directory: Path, name: str, text: str) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / name).write_text(text, encoding="utf-8")
+
+
+def test_parse_card() -> None:
+    card = parse_card(GOOD, "toy.md")
+    assert card.card_id == "toy_card" and card.tags == ["toy"] and card.file == "toy.md"
+    assert card.body == "Body with a formula E = T x."
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("no front matter", "missing YAML front matter"),
+        (GOOD.replace('source: "Someone et al. 2020, Eq. 3"\n', ""), "missing ['source']"),
+        (GOOD.replace("id: toy_card", "id: Toy Card"), "card_id"),
+        (GOOD.replace("tags: [toy]", "tags: [toy]\nauthor: me"), "unknown front matter keys"),
+        (GOOD.replace("Body with a formula E = T x.\n", ""), "body"),
+        (GOOD.replace("tags: [toy]", "tags: [toy"), "invalid YAML"),
+    ],
+)
+def test_invalid_cards_fail_clearly(text: str, message: str) -> None:
+    with pytest.raises(KnowledgePackError, match=message.replace("[", r"\[").replace("]", r"\]")):
+        parse_card(text, "bad.md")
+
+
+def test_duplicate_ids_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "a.md", GOOD)
+    _write(tmp_path, "b.md", GOOD)
+    with pytest.raises(
+        KnowledgePackError, match="duplicate card id 'toy_card' in 'a.md' and 'b.md'"
     ):
-        page = doc.new_page()
-        page.insert_textbox(
-            pymupdf.Rect(36, 36, 560, 800),  # type: ignore[no-untyped-call]
-            page_text,
-            fontsize=4,
-        )
-    doc.set_metadata({"title": "A Synthetic Test Paper About Speckle"})
-    doc.save(path)  # type: ignore[no-untyped-call]
-    doc.close()  # type: ignore[no-untyped-call]
+        load_knowledge_pack(CardDirectorySource(tmp_path), max_chars=10_000)
 
 
-def test_chunking_overlap() -> None:
-    words = " ".join(f"w{i}" for i in range(1200))
-    chunks = chunk_words(words, chunk_tokens=400, overlap_tokens=40)
-    assert len(chunks) >= 3
-    first, second = chunks[0].split(), chunks[1].split()
-    assert first[-30:] == second[:30]  # 40 tokens * 0.75 = 30 words of overlap
-    assert chunk_words("") == []
+def test_missing_or_empty_directory(tmp_path: Path) -> None:
+    with pytest.raises(KnowledgePackError, match="not found"):
+        CardDirectorySource(tmp_path / "nope").cards()
+    with pytest.raises(KnowledgePackError, match="no knowledge cards"):
+        CardDirectorySource(tmp_path).cards()
 
 
-def test_pdf_ingestion_sections_pages_and_ids(tmp_path: Path) -> None:
-    pdf = tmp_path / "Synthetic_Paper.pdf"
-    _make_pdf(pdf)
-    fragments = pdf_fragments(pdf)
-    assert fragments
-    assert all(f.fragment_id.startswith("synthetic_paper:p") for f in fragments)
-    assert fragments[0].source == "A Synthetic Test Paper About Speckle"
-    sections = {f.metadata["section"] for f in fragments}
-    assert "1. Introduction" in sections and "2. Methods" in sections
-    assert {f.metadata["page"] for f in fragments} == {1, 2}
-    assert not any("Someone 2020" in f.text for f in fragments)  # references skipped
-    assert [f.fragment_id for f in fragments] == [f.fragment_id for f in pdf_fragments(pdf)]
+def test_size_limit(tmp_path: Path) -> None:
+    _write(tmp_path, "a.md", GOOD)
+    pack = load_knowledge_pack(CardDirectorySource(tmp_path), max_chars=10_000)
+    with pytest.raises(KnowledgePackError, match=rf"{len(pack.text)} characters, limit is 100"):
+        load_knowledge_pack(CardDirectorySource(tmp_path), max_chars=100)
 
 
-def test_cards_are_valid_and_cite_papers() -> None:
-    fragments = ingest(None, CARDS)
-    assert len(fragments) >= 8
-    for f in fragments:
-        assert f.fragment_id.startswith("card:")
-        assert f.metadata["kind"] == "card"
-        assert any(name in f.source for name in ("Delloye", "Huang", "Zhao"))
+def test_pack_is_deterministic_and_sorted(tmp_path: Path) -> None:
+    _write(tmp_path, "z.md", GOOD.replace("toy_card", "alpha_card"))
+    _write(tmp_path, "a.md", GOOD)
+    source = CardDirectorySource(tmp_path)
+    assert isinstance(source, KnowledgeSource)
+    first = load_knowledge_pack(source, max_chars=10_000)
+    second = build_knowledge_pack(list(reversed(source.cards())))
+    assert first.text == second.text and first.sha256 == second.sha256
+    assert first.text.index("Card `alpha_card`") < first.text.index("Card `toy_card`")
+    assert first.text.startswith("# Knowledge pack")
+    assert "Source: Someone et al. 2020, Eq. 3" in first.text
+    assert first.card_ids == {"alpha_card", "toy_card"}
 
 
-def test_bm25_search_ranks_relevant_card_first() -> None:
-    kb = InMemoryKnowledgeBase(ingest(None, CARDS))
-    assert isinstance(kb, KnowledgeBase)
-    top = kb.search("retrieve transmission matrix gamma GGS", top_k=3)
-    assert top[0].fragment_id == "card:ggs_transmission_matrix"
-    assert top[0].score is not None and top[0].score > 0
-    assert kb.search("enhancement", top_k=1)[0].fragment_id == "card:focusing_enhancement"
-    assert kb.search("zzzz qqqq") == []
-    only_cards = kb.search("ising", filters={"kind": "card"})
-    assert only_cards and all(f.metadata["kind"] == "card" for f in only_cards)
+def test_repository_cards_form_a_valid_pack() -> None:
+    pack = load_knowledge_pack(CardDirectorySource(CARDS), max_chars=60_000)
+    ids = pack.card_ids
+    assert {
+        "intensity_only_measurement",
+        "ising_energy_from_intensity",
+        "coupling_matrix_from_tm",
+        "ggs_transmission_matrix",
+        "focusing_enhancement",
+        "gerchberg_saxton",
+    } <= ids
+    for card in pack.cards:
+        assert any(name in card.source for name in ("Delloye", "Huang", "Zhao")), card.card_id
+    assert "Discrepancy" in pack.text  # deviations from the printed papers are explicit
+    assert len(pack.text) < 60_000
 
 
-def test_index_round_trip(tmp_path: Path) -> None:
-    kb = InMemoryKnowledgeBase(ingest(None, CARDS))
-    path = tmp_path / "index" / "fragments.jsonl"
-    kb.save_jsonl(path)
-    again = InMemoryKnowledgeBase.load_jsonl(path)
-    assert len(again) == len(kb)
-    assert again.search("replica overlap")[0].fragment_id == "card:replica_overlap"
-
-
-@pytest.mark.skipif(not any(PAPERS.glob("*.pdf")), reason="papers are local-only (gitignored)")
-def test_real_papers_ingest() -> None:
-    fragments = ingest(PAPERS, CARDS)
-    papers = {f.metadata.get("file") for f in fragments if f.metadata.get("kind") == "paper"}
-    assert len(papers) == 3
-    kb = InMemoryKnowledgeBase(fragments)
-    hits = kb.search("Gerchberg Saxton transmission matrix adaptive parameter", top_k=5)
-    assert any("Generalizing" in h.source or h.fragment_id.startswith("card:") for h in hits)
-
-
-class FakeIndex:
-    def __init__(self) -> None:
-        self.records: list[dict[str, Any]] = []
-
-    def upsert_records(self, *, records: list[dict[str, Any]], namespace: str) -> None:
-        self.records += records
-
-    def search(
-        self,
-        *,
-        namespace: str,
-        top_k: int | None = None,
-        inputs: Mapping[str, Any] | None = None,
-        filter: Mapping[str, Any] | None = None,
-        fields: Sequence[str] | None = None,
-    ) -> dict[str, Any]:
-        self.last_filter = filter
-        hits = [
-            {"id_": r["_id"], "score_": 0.9, "fields": {k: v for k, v in r.items() if k != "_id"}}
-            for r in self.records[: top_k or 5]
-        ]
-        return {"result": {"hits": hits}}
-
-
-def test_pinecone_mapping_with_fake_index() -> None:
-    fragment = KnowledgeFragment(
-        fragment_id="card:x", text="hello", source="Paper", metadata={"kind": "card", "page": 2}
-    )
-    record = to_record(fragment)
-    assert record == {
-        "_id": "card:x",
-        "chunk_text": "hello",
-        "source": "Paper",
-        "kind": "card",
-        "page": 2,
-    }
-    index = FakeIndex()
-    kb = PineconeKnowledgeBase(index, "papers")
-    assert isinstance(kb, KnowledgeBase)
-    assert kb.upsert([fragment] * 200) == 200
-    [hit] = kb.search("hello", top_k=1, filters={"kind": "card"})
-    assert hit.fragment_id == "card:x" and hit.text == "hello" and hit.score == 0.9
-    assert hit.metadata == {"kind": "card", "page": 2}
-    assert index.last_filter == {"kind": {"$eq": "card"}}
-
-
-@pytest.mark.live
-def test_pinecone_live() -> None:
-    settings = Settings()
-    if not (settings.run_live and settings.pinecone_api_key and settings.pinecone_index):
-        pytest.skip("needs EXPSYS_RUN_LIVE=1, PINECONE_API_KEY and PINECONE_INDEX")
-    kb = PineconeKnowledgeBase.from_settings(settings)
-    assert isinstance(kb.search("transmission matrix", top_k=3), list)
+def test_review_document_is_up_to_date() -> None:
+    """docs/knowledge_pack_review.md must contain the current pack verbatim."""
+    pack = load_knowledge_pack(CardDirectorySource(CARDS), max_chars=60_000)
+    review = (REPO / "docs" / "knowledge_pack_review.md").read_text(encoding="utf-8")
+    begin = "<!-- BEGIN VERBATIM KNOWLEDGE PACK -->\n"
+    end = "<!-- END VERBATIM KNOWLEDGE PACK -->"
+    verbatim = review.split(begin, 1)[1].split(end, 1)[0]
+    assert verbatim == pack.text, "regenerate docs/knowledge_pack_review.md (expsys knowledge)"
+    assert pack.sha256 in review

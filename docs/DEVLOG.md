@@ -453,3 +453,101 @@
 - `CommandParam.unit`: пустая строка `""` нормализуется в `None` («нет единицы»). Реальные
   LLM часто так пишут для безразмерных параметров; значение команды не меняется, а
   непустая неверная единица по-прежнему отклоняется валидатором.
+
+---
+
+# Ветка `feature/static-knowledge`
+
+## Шаг 1. RAG заменён статическим knowledge pack
+
+**Решение (твоё):** Knowledge Base с поиском убрана. Статей три, карточек меньше десяти —
+весь объём помещается в системный промпт Scientist; поиск только добавлял риск потерять
+нужную формулу (и делал поведение зависимым от локального индекса).
+
+**Что сделано**
+- `knowledge/cards.py`: `KnowledgeSource` (протокол «источник карточек»: `cards()`),
+  `CardDirectorySource` (каталог `*.md`), `parse_card` (строгая проверка front matter:
+  обязательные `id`/`title`/`source`, без лишних ключей, `id` в snake_case, непустое
+  тело), `build_knowledge_pack` (уникальность id, сортировка по id, лимит
+  `EXPSYS_KNOWLEDGE_PACK_MAX_CHARS`, по умолчанию 60 000 символов) → `KnowledgePack(text,
+  cards, sha256)`. Все ошибки — `KnowledgePackError` с именем файла.
+- Scientist: системный промпт = `prompts/scientist.md` + текст пакета
+  (`scientist_system_prompt`); из контекста убраны `knowledge_fragments`. Проверка в
+  коде: каждая цитата — `card_id` существующей карточки, хотя бы одна цитата.
+- Контракты: `KnowledgeFragment` → `KnowledgeCard`; **`Citation.fragment_id` →
+  `Citation.card_id`** (тип `Identifier`); в `ExperimentState` вместо `fragments` —
+  `knowledge_cards` и `knowledge_pack_sha256`.
+- Воспроизводимость: точный текст пакета сохраняется в `runs/<id>/knowledge_pack.md`,
+  хэш — в `state.json`; отчёт берёт заголовки и источники из карточек.
+- Пакет загружается и проверяется **до** создания каталога прогона (как preflight LLM).
+- Сценарии FakeLLM: цитаты `card:<id>` → `card_id: <id>`.
+
+**Удалено:** `knowledge/ingest.py` (PDF → чанки), `knowledge/memory.py` (BM25),
+`knowledge/pinecone_kb.py`, `knowledge/base.py` (`KnowledgeBase.search`), команда
+`expsys ingest`, опция `--kb`, зависимости `pinecone` и `pymupdf`, настройки `PINECONE_*`
+и `kb_index_path`, строка `data/knowledge/index/` в `.gitignore`, тесты RAG.
+
+**Как вернуть RAG, если база знаний вырастет.** Полная реализация — в коммите
+`6b42b72` («feat: add knowledge base with PDF ingestion, BM25 and Pinecone backends»):
+```bash
+git show 6b42b72 --stat
+git checkout 6b42b72 -- src/experimental_system/knowledge/ingest.py \
+    src/experimental_system/knowledge/memory.py src/experimental_system/knowledge/pinecone_kb.py \
+    src/experimental_system/knowledge/base.py tests/test_knowledge.py
+uv add pymupdf pinecone
+```
+Затем: вернуть `KnowledgeBase.search` в Scientist (в коммите `f565769` есть вариант
+«сначала карточки, потом вся база») и цитаты по `fragment_id` либо сделать гибрид:
+knowledge pack в промпте + поиск по статьям как дополнительный инструмент.
+
+**Новые понятия**
+- *Static context vs RAG*: если знаний мало, надёжнее отдать их модели целиком
+  (детерминированно, проверяемо человеком), чем доверять ранжированию поиска. RAG нужен,
+  когда корпус не помещается в контекст.
+
+## Шаг 2. Команда `expsys knowledge`
+
+- `uv run expsys knowledge` печатает knowledge pack, `--full` — весь системный промпт
+  Scientist (роль + пакет). Используются **те же функции** (`app.knowledge_pack`,
+  `scientist_system_prompt`), что и при прогоне, поэтому вывод совпадает с тем, что
+  видит модель, байт в байт (это проверяет тест).
+- Ошибки пакета (нет каталога, неверная карточка, превышен лимит) — одна строка, код 1;
+  `expsys run` падает с той же ошибкой до создания каталога прогона.
+
+## Шаг 3. Сверка карточек со статьями
+
+Все карточки перепроверены по трём PDF в `data/papers/`: формулы, знаки, номера
+уравнений/разделов/рисунков. Расхождения помечены в карточках строками `Discrepancy:`
+(статья ↔ наша конвенция или противоречие внутри статьи) и `Note:` (наше прочтение,
+вывод или расширение).
+
+**Новая карточка** `intensity_only_measurement`: камера видит только `|E|²` → T нужно
+восстанавливать (интерферометрия, как у Delloye через Popoff et al., или phase retrieval
+GGS без опорного пучка); следствия: калибровка T нужна почти всем задачам (кроме самой
+Изинг-оптимизации), T известна до фазы строки, качество — инвариантными метриками.
+
+**Исправлено**
+- `ising_energy_from_intensity`: было «одна мода → J ранга 1, ферромагнитное основное
+  состояние». Верно: `J = Re t·Re tᵀ + Im t·Im tᵀ`, ранг ≤ 2; однородная намагниченность
+  получается только с фазовым bias из T.
+- Источники Pierangeli 2019 и Jacucci 2022 помечены как ссылки [15]/[14] из Delloye
+  (в `data/papers` их нет); Vellekoop & Mosk — как ref. [24] из Huang.
+- Номера уравнений уточнены: Huang ур. 1–4 (ур. 3 напечатано с `|E|`, показатель `n`
+  введён в тексте Sec. 2); Zhao & Chi: GS 1–4, SPR 7–10, CC 11, DPR 12–21, MPR 22–25.
+- Числа из рисунков Huang (Fig. 2a/2c/2d) уточнены по тексту статьи.
+
+**Помечено как расхождение / требует проверки физиком**
+- Знак J у Delloye (ур. 1) несовместим с `H = −I`.
+- Определение overlap у Delloye (формула, похоже, искажена вёрсткой) vs наш Паризи `|q|`.
+- Формула bias — у Delloye только ссылка на [14]; наша `−Arg(Σ_{m∈S} t_mi)` — гипотеза.
+- Теория η для N_f фокусов дана у Huang словами; формула — наша интерпретация.
+- Fig. 3d у Huang — бинарно-*амплитудное* зондирование (DMD), не наш случай.
+- Подпись Fig. 6 у Huang противоречит тексту (82.4/71.5/4.1% vs 76/67/5%, обратный
+  порядок алгоритмов) — доверяем тексту.
+- DPR (Zhao & Chi, ур. 14): вторая маска — комплексное частное без нормировки модуля, т.е.
+  не строго фазовая (наше прочтение; объясняет CC = 1).
+- Simulated annealing и GS через известную T — наши расширения, в статьях их нет.
+
+**Для физика:** `docs/knowledge_pack_review.md` — дословный вывод `expsys knowledge`
+(9 карточек, ~17.5 тыс. символов) с предисловием и списком пунктов на проверку. Тест
+`test_review_document_is_up_to_date` следит, чтобы файл не отстал от карточек.
