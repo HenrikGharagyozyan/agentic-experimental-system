@@ -243,3 +243,45 @@
   1024 элемента, arrays/…npy», но никогда не видит сами числа.
 - *Атомарная запись*: пишем во временный файл и переименовываем; при сбое не останется
   наполовину записанного `state.json`.
+
+---
+
+## Этап 6. LLM-слой
+
+**Что сделано** (`llm/`)
+- `config.py`: модели по агентам (`SCIENTIST_MODEL`, `EXPERIMENT_MODEL`, `RUNNER_MODEL`,
+  `ANALYST_MODEL`) с общим `DEFAULT_MODEL`; в коде **нет ни одного имени модели** —
+  `Settings.model_for()` бросает понятную ошибку, если ничего не задано. Плюс OpenRouter,
+  Pinecone, лимиты (`EXPSYS_MAX_LLM_CALLS`, `EXPSYS_MAX_ITERATIONS`), `EXPSYS_RUN_LIVE`.
+- `openrouter.py` — `OpenRouterClient` (через пакет `openai`, `base_url` OpenRouter):
+  `json_schema` → при HTTP 400 автоматически переключается на «JSON в тексте» и
+  запоминает это до конца прогона → Pydantic-валидация → повтор с текстом ошибки
+  (до 3 попыток) → `StructuredOutputError`. Сетевой вызов спрятан за `ChatTransport`,
+  поэтому вся логика fallback/retry тестируется без сети.
+- `structured.py` — инструкция со схемой, извлечение JSON из ответа (markdown-блоки,
+  текст вокруг), понятные LLM сообщения об ошибках валидации.
+- `fake.py` — `FakeLLM`: очередь заготовленных ответов на агента; ответы проходят ту же
+  Pydantic-валидацию, что и настоящие.
+- `tracking.py` — `LoggedLLM` (одна строка JSONL на вызов: агент, модель, время,
+  попытки, режим, токены, ошибка) и `CallBudget` (лимит вызовов на прогон →
+  `LLMBudgetExceededError` → FAILED с понятным сообщением).
+- `factory.py` — `build_clients("fake" | "openrouter", …)` → по клиенту на агента.
+
+**Ключевые решения**
+- **Инструкция со схемой добавляется всегда**, даже в режиме `json_schema`: через
+  OpenRouter часть провайдеров молча игнорирует `response_format`; лишние токены
+  дешевле лишней попытки.
+- **`strict: false`** в json_schema: strict-режим OpenAI требует, чтобы все поля были
+  обязательными, а наши схемы имеют defaults. Валидацию всё равно делает Pydantic.
+- **Лимит считает вызовы агентов** (`generate`), каждый ≤ `EXPSYS_LLM_MAX_ATTEMPTS`
+  HTTP-запросов → стоимость прогона ограничена сверху `max_llm_calls × max_attempts`.
+- Tool calling — `TODO(later)` (json_schema + текстовый fallback покрывают все модели).
+- Модуль назван `tracking.py`, а не `logging.py`, чтобы не путать со стандартным `logging`.
+
+**Новые понятия**
+- *Structured output*: просим модель вернуть JSON по схеме и сразу валидируем его в
+  Pydantic-объект. Если модель ошиблась, отправляем ей текст ошибки и просим исправить —
+  это обычно работает со второй попытки.
+- *Generic-метод* `def generate[T: BaseModel](…, response_model: type[T]) -> T`
+  (синтаксис Python 3.12): тип результата выводится из переданного класса, mypy знает,
+  что `generate(msgs, AnalysisReport)` возвращает `AnalysisReport`.

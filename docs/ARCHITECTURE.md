@@ -143,4 +143,18 @@ runs/<experiment_id>/
   final_report.md       # отчёт на русском
 ```
 
+### 4.9 LLM-слой (`llm/`)
+Агенты знают только `LLMClient.generate(messages, ResponseModel) -> ResponseModel`.
+
+```
+Agent ──► LoggedLLM (бюджет вызовов + llm_calls.jsonl)
+             └──► OpenRouterClient (одна модель)     или   FakeLLM (сценарий)
+                     ├─ json_schema (response_format)
+                     ├─ HTTP 400 → JSON-в-тексте (запоминается)
+                     └─ Pydantic-валидация → повтор с ошибкой (≤ 3) → StructuredOutputError
+```
+Модель задаётся для каждого агента отдельно (`SCIENTIST_MODEL`, …) с общим
+`DEFAULT_MODEL`; имён моделей в коде нет. `FakeLLM` проигрывает ответы из сценария и
+валидирует их так же строго, поэтому весь цикл работает офлайн и детерминированно.
+
 <!-- Следующие разделы добавляются по мере реализации этапов. -->
