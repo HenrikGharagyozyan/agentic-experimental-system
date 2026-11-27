@@ -12,6 +12,15 @@ from experimental_system.llm.tracking import CallBudget, LoggedLLM
 LLMKind = Literal["fake", "openrouter"]
 
 
+def preflight(kind: LLMKind, settings: Settings) -> None:
+    """Fail fast on missing configuration, before any run directory is created."""
+    if kind == "openrouter":
+        if settings.openrouter_api_key is None:
+            raise ConfigError("OPENROUTER_API_KEY is not set (see .env.example)")
+        for agent in AGENT_NAMES:
+            settings.model_for(agent)
+
+
 def build_clients(
     kind: LLMKind,
     settings: Settings,

@@ -207,4 +207,56 @@ route: DONE → finalize        REPLAN  → experiment (iteration+1)
 собирает registry → backend → KB → LLM-клиенты (с логированием и бюджетом) → оркестратор;
 CLI и e2e-тесты используют одну и ту же сборку.
 
-<!-- Следующие разделы добавляются по мере реализации этапов. -->
+### 4.14 CLI (`cli.py`)
+- `expsys ingest data/papers [--kb memory|pinecone]` — индекс статей и карточек;
+- `expsys run "<задача>" --llm fake|openrouter --kb memory|pinecone [--max-iterations N]
+  [--scenario <name>] [--approve]`;
+- `expsys show <experiment_id>`, `expsys scenarios`.
+Ошибки конфигурации (нет ключа, нет модели, неизвестный сценарий) выдаются одной
+строкой и проверяются **до** создания каталога прогона.
+
+## 5. Конфигурация
+
+Все настройки — `config.Settings` (pydantic-settings): переменные окружения и `.env`
+(документированы в `.env.example`). Модели LLM — только в настройках (`DEFAULT_MODEL` +
+`SCIENTIST_MODEL` / `EXPERIMENT_MODEL` / `RUNNER_MODEL` / `ANALYST_MODEL`). Пустая строка
+(`KEY=`) означает «не задано».
+
+## 6. Где проходят жёсткие правила
+
+| Правило | Где обеспечено |
+|---|---|
+| LLM не считает | все числа: `scientific_core/*`, `evaluation.py`; Analyst получает готовые Metrics |
+| Параметры устройств только из реестра | `configs/devices/*.yaml` → `YamlDeviceRegistry`; Runner видит только его |
+| Каждая команда проверяется | `SafetyValidator` в узле `validate`, повторно перед `execute`, и внутри backend |
+| Вне диапазона = отказ, не clamp | `check_value` только сообщает; тест проверяет, что значение не изменено |
+| Лимит итераций и вызовов LLM | `route` → ITERATION_LIMIT; `CallBudget` → FAILED |
+| Большие массивы не идут в LLM | backend → `.npy` + `data_ref`; сводки для агентов содержат только скаляры |
+| `extra="forbid"` | базовый `Contract` всех схем |
+| Цитаты Scientist реальны | проверка в `run_scientist` по результатам поиска |
+| DONE только при выполненных критериях | `run_analyst` переводит DONE → REPLAN |
+
+## 7. Известные ограничения (MVP)
+
+- Мир симуляции идеализирован: SLM без LUT-нелинейности и cross-talk, нет дрейфа среды
+  во времени, шум камеры — простая гауссова модель, генератор → ℓ — гипотеза.
+- `tm_correlation` доступна только в симуляции (нужна истинная T); на железе качество T —
+  только через `enhancement_ratio`.
+- Энергии Изинга в метриках считаются по «эталонной» T (в симуляции — истинной); на
+  железе ими станет калиброванная T.
+- Точный основной уровень — только для N ≤ 20; для больших N используются
+  `plateau_fraction`, `replica_overlap`, `target_signal`.
+- Tool-calling режим LLM, DPR/MPR, LLM-формулируемые поисковые запросы Scientist —
+  `TODO(later)`.
+- Оркестратор синхронный; approval — callback в CLI (для API понадобится `interrupt`).
+
+## 8. Что дальше
+
+1. **Digital twin**: `SimulationWorld` → параметры, откалиброванные по реальной установке
+   (LUT SLM, шум и битность камеры, дрейф T, задержки триггера), тот же интерфейс backend.
+2. **Hardware backend** (MCP): реальный реестр `configs/devices/lab.yaml` после проверки
+   человеком; backend **обязан** повторно валидировать каждую команду (уже так сделано в
+   симуляции); обязательный `require_approval`; драйверы SLM (Blink SDK), камеры
+   (`alkusb3`, внешний триггер), генератора, лазера (COM-порт).
+3. Процедуры `procedures` переиспользуются как есть: они общаются с устройствами только
+   через «показать маску / снять кадр».

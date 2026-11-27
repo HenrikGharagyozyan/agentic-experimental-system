@@ -10,9 +10,9 @@ Model names are never hard-coded: they come only from these settings / `.env`.
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AppEnv = Literal["dev", "test"]
@@ -81,6 +81,25 @@ class Settings(BaseSettings):
 
     # --- tests -------------------------------------------------------------------------------
     run_live: bool = False  # EXPSYS_RUN_LIVE=1 enables @pytest.mark.live tests
+
+    @field_validator(
+        "openrouter_api_key",
+        "default_model",
+        "scientist_model",
+        "experiment_model",
+        "runner_model",
+        "analyst_model",
+        "pinecone_api_key",
+        "pinecone_index",
+        "pinecone_embed_model",
+        mode="before",
+    )
+    @classmethod
+    def _empty_is_unset(cls, value: Any) -> Any:
+        """``KEY=`` in .env (as in .env.example) means "not set", not an empty secret."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     def model_for(self, agent: AgentName) -> str:
         """Model of one agent: its own setting, else DEFAULT_MODEL."""

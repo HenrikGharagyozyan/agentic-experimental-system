@@ -13,7 +13,7 @@ from experimental_system.devices.yaml_registry import YamlDeviceRegistry
 from experimental_system.knowledge.base import KnowledgeBase
 from experimental_system.knowledge.ingest import ingest
 from experimental_system.knowledge.memory import InMemoryKnowledgeBase
-from experimental_system.llm.factory import LLMKind, build_clients
+from experimental_system.llm.factory import LLMKind, build_clients, preflight
 from experimental_system.llm.tracking import CallBudget
 from experimental_system.orchestrator import Approver, Orchestrator, OrchestratorDeps
 from experimental_system.scenarios import Scenario
@@ -58,6 +58,7 @@ def run_task(
     experiment_id: str | None = None,
     runs_dir: Path | None = None,
 ) -> RunResult:
+    preflight(llm_kind, settings)
     experiment_id = experiment_id or new_experiment_id()
     store = RunStore(runs_dir or settings.runs_dir, experiment_id)
     registry = YamlDeviceRegistry.from_file(settings.registry_path)

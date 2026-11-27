@@ -182,3 +182,11 @@ def test_openrouter_live() -> None:
         [ChatMessage(role="user", content="Return value 7 and label 'seven'.")], Answer
     )
     assert answer.value == 7
+
+
+def test_empty_env_values_mean_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`KEY=` lines copied from .env.example must not become empty secrets/models."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("DEFAULT_MODEL", " ")
+    settings = Settings(_env_file=None)
+    assert settings.openrouter_api_key is None and settings.default_model is None
